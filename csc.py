@@ -71,7 +71,7 @@ def load_settings():
                 settings['save_seeding'] = s.getboolean('save_seeding', settings.get('save_seeding', True))
                 settings['torrent_client'] = s.get('torrent_client', settings.get('torrent_client', 'qBittorrent'))
         except Exception as e:
-            print(f"Warning: Failed to load preferences.ini ({e}). Using default settings.")
+            print(f"[CSC] Failed to load preferences, setting to defaults")
 
     return settings
 
@@ -90,7 +90,7 @@ class PreviewWorker(QThread):
         self.settings = settings if settings is not None else load_settings()
 
     def run(self):
-        assets_dir = resource_path("preview_assets")
+        assets_dir = resource_path("assets")
         if not os.path.exists(assets_dir):
             self.finished.emit(None)
             return
@@ -198,7 +198,7 @@ class PreviewWorker(QThread):
             icon_target_w = 0
 
             # 2. Handle icon scaling and positioning on the right side
-            icon_path = resource_path("gt_assets/gtlogonew.png")  # Ensure your icon is converted to PNG
+            icon_path = resource_path("assets/gtlogonew.png")  # Ensure your icon is converted to PNG
             if os.path.exists(icon_path):
                 icon_img = Image.open(icon_path).convert("RGBA")
                 
@@ -448,7 +448,7 @@ class ProcessingWorker(QThread):
                 icon_target_w = 0
 
                 # 2. Handle icon scaling and positioning on the right side
-                icon_path = resource_path("gt_assets/gtlogonew.png")
+                icon_path = resource_path("assets/gtlogonew.png")
                 if os.path.exists(icon_path):
                     icon_img = Image.open(icon_path).convert("RGBA")
                     

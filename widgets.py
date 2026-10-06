@@ -62,7 +62,7 @@ class CategoryTile(QFrame):
         if is_special:
             self.setMouseTracking(True)
 
-        self.setFixedSize(78, 92)
+        self.setFixedSize(110, 92)
 
         if is_disabled:
             base_style = """
@@ -82,12 +82,12 @@ class CategoryTile(QFrame):
         elif is_special:
             base_style = """
                 QFrame {
-                    background-color: #3b233e;
-                    border: 1px solid #8b3a62;
+                    background-color: #231c18;
+                    border: 1px solid #583423;
                     border-radius: 4px;
                 }
                 QFrame:hover {
-                    background-color: #4c2d51;
+                    background-color: #2b2420;
                 }
             """
         else:
@@ -110,7 +110,7 @@ class CategoryTile(QFrame):
         img_lbl = QLabel()
         img_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        img_path = os.path.join("gt_assets", f"{cat_id}.jpg")
+        img_path = os.path.join("assets", f"{cat_id}.jpg")
 
         if os.path.exists(img_path):
             pixmap = QPixmap(img_path).scaled(
@@ -137,7 +137,6 @@ class CategoryTile(QFrame):
         text_lbl = QLabel(cat_name)
         text_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         text_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        text_lbl.setWordWrap(True)
         text_lbl.setStyleSheet(
             f"color: {text_color}; font-size: 10px; background: transparent; border: none;"
         )
@@ -176,7 +175,6 @@ class CategoryDropdown(QPushButton):
     def __init__(self, categories_dict, placeholder="Select category...", special_cats=None, parent=None):
         super().__init__(parent)
         self.special_cats = special_cats or {}
-        # Combine dictionaries putting special categories first, then sorting the rest alphabetically
         sorted_special = sorted(self.special_cats.items(), key=lambda x: x[0])
         sorted_regular = sorted([item for item in categories_dict.items() if item[0] not in self.special_cats], key=lambda x: x[0])
         self.sorted_categories = sorted_special + sorted_regular
@@ -249,10 +247,11 @@ class CategoryDropdown(QPushButton):
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")
         grid_layout = QGridLayout(grid_widget)
-        grid_layout.setSpacing(9)
+        # Reduced spacing between tiles to make them closer together
+        grid_layout.setSpacing(2)
 
         excluded_id = self.get_excluded_id()
-        col_count = 9
+        col_count = 8
         for index, (cat_name, cat_id) in enumerate(self.sorted_categories):
             row = index // col_count
             col = index % col_count
@@ -269,7 +268,7 @@ class CategoryDropdown(QPushButton):
         layout.addWidget(scroll)
 
         btn_width = self.width()
-        popup_width = max(btn_width, 540)
+        popup_width = max(btn_width, 740)
         global_pos = self.mapToGlobal(QPoint(0, self.height() + 4))
         self.popup.setGeometry(global_pos.x(), global_pos.y(), popup_width, 305)
         self.popup.show()
@@ -283,7 +282,7 @@ class CategoryDropdown(QPushButton):
         self.selected_name = cat_name
         self.selected_id = cat_id
 
-        img_path = os.path.join("gt_assets", f"{cat_id}.jpg")
+        img_path = os.path.join("assets", f"{cat_id}.jpg")
         if os.path.exists(img_path):
             self.setIcon(QIcon(img_path))
             self.setIconSize(QSize(20, 20))
@@ -339,7 +338,7 @@ class MultiCategoryDropdown(QPushButton):
             names = list(self.selected_items.values())
             self.setText(f"  {', '.join(names)}")
             first_id = list(self.selected_items.keys())[0]
-            img_path = os.path.join("gt_assets", f"{first_id}.jpg")
+            img_path = os.path.join("assets", f"{first_id}.jpg")
             if os.path.exists(img_path):
                 self.setIcon(QIcon(img_path))
                 self.setIconSize(QSize(20, 20))
@@ -372,7 +371,7 @@ class MultiCategoryDropdown(QPushButton):
         self.refresh_popup_content()
 
         btn_width = self.width()
-        popup_width = max(btn_width, 540)
+        popup_width = max(btn_width, 740)
         global_pos = self.mapToGlobal(QPoint(0, self.height() + 4))
         self.popup.setGeometry(global_pos.x(), global_pos.y(), popup_width, 305)
         self.popup.show()
@@ -399,10 +398,11 @@ class MultiCategoryDropdown(QPushButton):
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")
         grid_layout = QGridLayout(grid_widget)
-        grid_layout.setSpacing(9)
+        # Reduced spacing between tiles to make them closer together
+        grid_layout.setSpacing(2)
 
         excluded_id = self.get_excluded_id()
-        col_count = 9
+        col_count = 8
         for index, (cat_name, cat_id) in enumerate(self.sorted_categories):
             row = index // col_count
             col = index % col_count
@@ -440,7 +440,7 @@ class ColorPickerPopup(QWidget):
         
         layout = QGridLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        layout.setSpacing(2)
 
         for r_idx, row in enumerate(SCEEDITOR_COLORS):
             for c_idx, hex_color in enumerate(row):
@@ -508,7 +508,7 @@ class DraggablePictureTile(QWidget):
         self.setStyleSheet("background: #0d0f12; border-radius: 4px; border: 1px solid #2a2f3a;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(3, 3, 3, 3)
-        layout.setSpacing(3)
+        layout.setSpacing(2)
 
         img_lbl = QLabel()
         img_lbl.setPixmap(pixmap)

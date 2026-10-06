@@ -2,11 +2,12 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QFont, QPixmap, QCursor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QLabel, 
-    QPushButton, QScrollArea, QCheckBox, QSpinBox, QComboBox, QSlider, QProgressBar
+    QPushButton, QScrollArea, QCheckBox, QSpinBox, QComboBox, QSlider, QStackedWidget, QProgressBar
 )
 import qtawesome as qta
 from curl_cffi import requests as cffi_requests
 from login import get_stored_session, USER_AGENT
+from history import HistoryPanelComponent
 
 
 class NonScrollableSlider(QSlider):
@@ -26,7 +27,7 @@ class SidebarPanelComponent(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         
         sidebar_frame = QFrame()
-        sidebar_frame.setFixedWidth(340)
+        sidebar_frame.setFixedWidth(400)
         sidebar_frame.setStyleSheet("""
             QFrame {
                 background-color: #1e222b;
@@ -141,7 +142,7 @@ class SidebarPanelComponent(QWidget):
         config_layout.setContentsMargins(10, 10, 10, 10)
         config_layout.setSpacing(6)
 
-        # X Tiles (Column 0 & 1)
+        # X Tiles (Column 0 & 1 - Left aligned)
         self.spin_x_tiles = QSpinBox()
         self.spin_x_tiles.setRange(1, 10)
         self.spin_x_tiles.setValue(5)
@@ -149,21 +150,24 @@ class SidebarPanelComponent(QWidget):
         self.apply_input_style(self.spin_x_tiles)
         config_layout.addWidget(self.spin_x_tiles, 0, 0)
         
-        lbl_x_tiles = QLabel("X Tiles")
+        lbl_x_tiles = QLabel("Horizontal Tiles")
         lbl_x_tiles.setStyleSheet("color: #ffffff;")
         config_layout.addWidget(lbl_x_tiles, 0, 1)
 
-        # Y Tiles (Column 2 & 3 - Side by side with X Tiles)
+        # Add a stretch factor to column 2 to create even spacing/push items apart
+        config_layout.setColumnStretch(2, 1)
+
+        # Y Tiles (Shifted to Column 3 & 4 - Right aligned)
         self.spin_y_tiles = QSpinBox()
         self.spin_y_tiles.setRange(1, 10)
         self.spin_y_tiles.setValue(4)
         self.spin_y_tiles.setFixedWidth(45)
         self.apply_input_style(self.spin_y_tiles)
-        config_layout.addWidget(self.spin_y_tiles, 0, 2)
+        config_layout.addWidget(self.spin_y_tiles, 0, 3)
         
-        lbl_y_tiles = QLabel("Y Tiles")
+        lbl_y_tiles = QLabel("Vertical Tiles")
         lbl_y_tiles.setStyleSheet("color: #ffffff;")
-        config_layout.addWidget(lbl_y_tiles, 0, 3)
+        config_layout.addWidget(lbl_y_tiles, 0, 4)
 
         sidebar_layout.addWidget(config_box)
 
@@ -399,8 +403,7 @@ class SidebarPanelComponent(QWidget):
         sidebar_layout.addWidget(self.chk_seeding)
 
         self.combo_client = QComboBox()
-        # Set list to qBittorrent, qBittorrent WebUI & uTorrent only
-        self.combo_client.addItems(["qBittorrent", "qBittorrent WebUI", "uTorrent"])
+        self.combo_client.addItems(["qBittorrent", "uTorrent"])
         # Insert a blank item at index 0 so it's the initial selection
         self.combo_client.insertItem(0, "")
         self.combo_client.setCurrentIndex(0)
@@ -443,6 +446,11 @@ class SidebarPanelComponent(QWidget):
 
         sidebar_layout.addSpacing(6)
 
+        # --- Start Button & History Button Layout ---
+        start_container = QHBoxLayout()
+        start_container.setSpacing(6)
+        start_container.setContentsMargins(0, 0, 0, 0)
+
         self.btn_start = QPushButton("Start")
         self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_start.setEnabled(False)  # Start disabled by default
@@ -484,11 +492,43 @@ class SidebarPanelComponent(QWidget):
                 border-color: #ef4444;
             }
         """)
-        sidebar_layout.addWidget(self.btn_start)
+        start_container.addWidget(self.btn_start, 1)
+
+        self.btn_history = QPushButton()
+        self.btn_history.setIcon(qta.icon("fa6s.clock-rotate-left", color="#d0d4dc"))
+        self.btn_history.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_history.setStyleSheet("""
+            QPushButton {
+                background-color: #171a21;
+                border: 1px solid #3a4150;
+                border-radius: 4px;
+                padding: 8px;
+            }
+            QPushButton:hover { background-color: #2a2f3d; border-color: #3b82f6; }
+            QPushButton:pressed { background-color: #1f242e; }
+        """)
+        start_container.addWidget(self.btn_history)
+
+        sidebar_layout.addLayout(start_container)
 
         scroll_area.setWidget(scroll_content)
         frame_layout.addWidget(scroll_area)
-        main_layout.addWidget(sidebar_frame)
+
+        # --- QStackedWidget for View Switching ---
+        self.stacked_widget = QStackedWidget()
+        
+        # Page 0: Main Sidebar Frame
+        self.stacked_widget.addWidget(sidebar_frame)
+        
+        # Page 1: Separate History Panel Component
+        self.history_panel = HistoryPanelComponent(self)
+        self.stacked_widget.addWidget(self.history_panel)
+
+        # Wire up view switching buttons
+        self.btn_history.clicked.connect(lambda: self.stacked_widget.setCurrentIndex(1))
+        self.history_panel.back_requested.connect(lambda: self.stacked_widget.setCurrentIndex(0))
+
+        main_layout.addWidget(self.stacked_widget)
         
         # Load saved preferences after UI components are fully created
         self.load_preferences()
@@ -504,7 +544,7 @@ class SidebarPanelComponent(QWidget):
             }
             headers = {"User-Agent": USER_AGENT}
             try:
-                print("[Logout] Visiting logout endpoint...")
+                print("[LOGOUT] Trying to log out...")
                 response = cffi_requests.get(
                     "https://www.gaytor.rent/logout.php",
                     cookies=cookie_dict,
@@ -513,11 +553,10 @@ class SidebarPanelComponent(QWidget):
                     timeout=10
                 )
                 if response.status_code in (200, 301, 302):
-                    print("[Logout] Logout successful.")
+                    print("[LOGOUT] Logout successful")
             except Exception as e:
-                print(f"[Logout Error] Failed during logout request: {e}")
+                print(f"[LOGOUT ERROR] Failed during logout request: {e}")
 
-        # Instruct main_ui (parent) to close the application
         if hasattr(self.parent, "close"):
             self.parent.close()
         
@@ -559,6 +598,7 @@ class SidebarPanelComponent(QWidget):
         self.chk_seeding.setEnabled(enabled)
         self.combo_client.setEnabled(enabled)
         self.btn_preview_sheet.setEnabled(enabled)
+        self.btn_history.setEnabled(enabled)
 
     def set_start_button_enabled(self, enabled: bool):
         """Enable or disable the start processing button smoothly."""
@@ -586,18 +626,27 @@ class SidebarPanelComponent(QWidget):
     def save_preferences(self):
         import configparser
         import os
+        import sys
+
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        ini_path = os.path.join(base_dir, "preferences.ini")
 
         config = configparser.ConfigParser()
         settings = self.get_sidebar_settings()
         current_client = settings['torrent_client']
 
-        # Update the specific client's path variable if it's currently active
-        if current_client == "qBittorrent" and self.torrent_client_path and self.torrent_client_path != "WebUI":
+        if current_client == "qBittorrent" and self.torrent_client_path:
             self.qbittorrent_path = self.torrent_client_path
-        elif current_client == "uTorrent" and self.torrent_client_path and self.torrent_client_path != "WebUI":
+        elif current_client == "uTorrent" and self.torrent_client_path:
             self.utorrent_path = self.torrent_client_path
+            
+        last_dir = getattr(self.parent, "last_browsed_dir", os.path.expanduser("~"))
 
-        config['SidebarPreferences'] = {
+        config['Preferences'] = {
             'create_contact_sheets': str(settings['create_contact_sheets']),
             'x_tiles': str(settings['x_tiles']),
             'y_tiles': str(settings['y_tiles']),
@@ -619,12 +668,79 @@ class SidebarPanelComponent(QWidget):
             'save_seeding': str(settings['save_seeding']),
             'torrent_client': str(current_client),
             'qbittorrent_path': str(self.qbittorrent_path),
-            'utorrent_path': str(self.utorrent_path)
+            'utorrent_path': str(self.utorrent_path),
+            'last_browsed_dir': str(last_dir)
         }
 
-        ini_path = os.path.join(os.getcwd(), "preferences.ini")
         with open(ini_path, 'w') as configfile:
             config.write(configfile)
+
+    def load_preferences(self):
+        import configparser
+        import os
+        import sys
+
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        ini_path = os.path.join(base_dir, "preferences.ini")
+        if not os.path.exists(ini_path):
+            return
+
+        config = configparser.ConfigParser()
+        config.read(ini_path)
+
+        if "Preferences" not in config:
+            return
+
+        pref = config["Preferences"]
+
+        try:
+            self.chk_create_contact_sheets.setChecked(pref.getboolean('create_contact_sheets', True))
+            self.spin_x_tiles.setValue(pref.getint('x_tiles', 5))
+            self.spin_y_tiles.setValue(pref.getint('y_tiles', 4))
+            self.spin_tile_size.setValue(pref.getint('tile_size', 512))
+            self.chk_automatic.setChecked(pref.getboolean('auto_size', True))
+            self.chk_original.setChecked(pref.getboolean('orig_size', False))
+            self.chk_stamp_details.setChecked(pref.getboolean('stamp_details', True))
+            self.chk_fname.setChecked(pref.getboolean('show_filename', True))
+            self.chk_fsize.setChecked(pref.getboolean('show_size', True))
+            self.chk_res.setChecked(pref.getboolean('show_res', True))
+            self.chk_fps.setChecked(pref.getboolean('show_fps', True))
+            self.chk_duration.setChecked(pref.getboolean('show_duration', True))
+            self.spin_ignore_first.setValue(pref.getint('ignore_first', 2))
+            self.spin_ignore_last.setValue(pref.getint('ignore_last', 0))
+            self.combo_format.setCurrentText(pref.get('format', 'JPEG'))
+            self.slider_quality.setValue(pref.getint('quality', 65))
+            self.chk_subfolders.setChecked(pref.getboolean('save_subfolder', False))
+            self.chk_save_frames.setChecked(pref.getboolean('save_frames', False))
+            self.chk_seeding.setChecked(pref.getboolean('save_seeding', True))
+            
+            self.qbittorrent_path = pref.get('qbittorrent_path', '')
+            self.utorrent_path = pref.get('utorrent_path', '')
+            
+            client = pref.get('torrent_client', '')
+            if client:
+                index = self.combo_client.findText(client)
+                if index != -1:
+                    self.combo_client.blockSignals(True)
+                    self.combo_client.setCurrentIndex(index)
+                    self.combo_client.blockSignals(False)
+            
+            if client == "qBittorrent":
+                self.torrent_client_path = self.qbittorrent_path
+            elif client == "uTorrent":
+                self.torrent_client_path = self.utorrent_path
+                
+            saved_last_dir = pref.get('last_browsed_dir', '')
+            if saved_last_dir and os.path.exists(saved_last_dir):
+                if hasattr(self.parent, "last_browsed_dir"):
+                    self.parent.last_browsed_dir = saved_last_dir
+
+        except Exception as e:
+            print(f"[DEBUG] Error loading preferences: {e}")
 
     def load_preferences(self):
         import configparser
@@ -637,10 +753,10 @@ class SidebarPanelComponent(QWidget):
         config = configparser.ConfigParser()
         config.read(ini_path)
 
-        if "SidebarPreferences" not in config:
+        if "Preferences" not in config:
             return
 
-        pref = config["SidebarPreferences"]
+        pref = config["Preferences"]
 
         try:
             self.chk_create_contact_sheets.setChecked(pref.getboolean('create_contact_sheets', True))
@@ -680,16 +796,14 @@ class SidebarPanelComponent(QWidget):
                 self.torrent_client_path = self.qbittorrent_path
             elif client == "uTorrent":
                 self.torrent_client_path = self.utorrent_path
-            elif client == "qBittorrent WebUI":
-                self.torrent_client_path = "WebUI"
-
-            if self.torrent_client_path and self.torrent_client_path != "WebUI":
-                self.lbl_file_status.setText(f"Client found: {os.path.basename(self.torrent_client_path)}")
-            elif self.torrent_client_path == "WebUI":
-                self.lbl_file_status.setText("Client: qBittorrent WebUI selected")
+                
+            saved_last_dir = pref.get('last_browsed_dir', '')
+            if saved_last_dir and os.path.exists(saved_last_dir):
+                if hasattr(self.parent, "last_browsed_dir"):
+                    self.parent.last_browsed_dir = saved_last_dir
 
         except Exception as e:
-            print(f"Error loading preferences: {e}")
+            print(f"[DEBUG] Error loading preferences: {e}")
 
     def get_sidebar_settings(self):
         return {
@@ -757,11 +871,6 @@ class SidebarPanelComponent(QWidget):
                     self.lbl_file_status.setText("No torrent client selected.")
                 self.combo_client.blockSignals(False)
                 
-        elif client_name == "qBittorrent WebUI":
-            self.torrent_client_path = "WebUI"
-            self._last_valid_client = client_name
-            self.lbl_file_status.setText("Client: qBittorrent WebUI selected")
-
     def resolve_torrent_executable(self, client_name):
         import os
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
@@ -816,7 +925,7 @@ class SidebarPanelComponent(QWidget):
             elif client_name == "uTorrent":
                 self.utorrent_path = found_path
                 
-            self.lbl_file_status.setText(f"Client found: {os.path.basename(found_path)}")
+            self.lbl_file_status.setText(f"Ready")
             return True
         else:
             return False

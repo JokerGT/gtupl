@@ -1,6 +1,6 @@
 import re
-from PyQt6.QtCore import QPoint, QSize, Qt
-from PyQt6.QtGui import QIcon, QCursor
+from PyQt6.QtCore import QPoint, QSize, Qt, QUrl
+from PyQt6.QtGui import QIcon, QCursor, QTextCursor, QMovie, QTextDocument
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QTextEdit, QMenu, QLabel
 )
@@ -74,6 +74,7 @@ class EditorPanelComponent(QWidget):
                 color: #d0d4dc;
             }
         """)
+        
         self.editor.textChanged.connect(self.parent.update_progress)
         self.editor.textChanged.connect(self.update_live_preview)
 
@@ -111,27 +112,74 @@ class EditorPanelComponent(QWidget):
 
         layout.addWidget(editor_container)
         layout.addWidget(preview_container)
+        
+        # Initialize active movies tracker for animations
+        self._active_movies = []
 
     def update_live_preview(self):
         raw_text = self.editor.toPlainText()
+        
+        # Stop and clear previous animations
+        for m in self._active_movies:
+            m.stop()
+        self._active_movies.clear()
+
+        document = self.preview_box.document()
+
+        # 1. Convert BBCode to HTML first
         html_content = bbcode_to_html(raw_text)
+
+        # 2. Replace emoticon shortcodes with <img> tags AFTER HTML conversion
+        for code, path in FORUM_EMOTICONS.items():
+            if code in raw_text:
+                movie = QMovie(path)
+                if movie.isValid():
+                    document.addResource(
+                        QTextDocument.ResourceType.ImageResource,
+                        QUrl(path),
+                        movie.currentPixmap()
+                    )
+                    movie.frameChanged.connect(lambda _, m=movie, p=path: (
+                        document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(p), m.currentPixmap()),
+                        self.preview_box.viewport().update()
+                    ))
+                    movie.start()
+                    self._active_movies.append(movie)
+
+                # Use proportional height scaling instead of a fixed square width/height
+                img_tag = f'<img src="{path}" style="height: 20px; vertical-align: middle;" />'
+                html_content = html_content.replace(code, img_tag)
+
         self.preview_box.setHtml(f'<html><body style="color: #d0d4dc; font-family: sans-serif; font-size: 11pt;">{html_content}</body></html>')
 
     def wrap_selected_text(self, tag, is_block=False):
         cursor = self.editor.textCursor()
-        # Normalize QTextEdit paragraph separators to standard newlines
         selected_text = cursor.selectedText().replace("\u2029", "\n")
+        has_selection = bool(selected_text)
         
         if tag in ("ul", "ol"):
             lines = selected_text.splitlines() if selected_text else [""]
             items = "".join(f"[li]{line}[/li]" for line in lines)
             replacement = f"[{tag}]{items}[/{tag}]"
+            cursor.insertText(replacement)
+            move_back = len(f"[/{tag}]") + (len("[/li]") if not has_selection else 0)
         elif is_block:
             replacement = f"[{tag}]\n{selected_text}\n[/{tag}]"
+            cursor.insertText(replacement)
+            move_back = len(f"[/{tag}]") if not has_selection else len(f"\n[/{tag}]")
         else:
-            replacement = f"[{tag}]{selected_text}[/tag]"
+            replacement = f"[{tag}]{selected_text}[/{tag}]"
+            cursor.insertText(replacement)
+            move_back = len(f"[/{tag}]")
             
-        cursor.insertText(replacement)
+        if has_selection:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, move_back + len(selected_text))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(selected_text))
+        else:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, move_back)
+            
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def show_size_menu(self):
         menu = QMenu(self)
@@ -148,7 +196,18 @@ class EditorPanelComponent(QWidget):
     def insert_size_tag(self, size_num):
         cursor = self.editor.textCursor()
         selected_text = cursor.selectedText()
-        cursor.insertText(f"[size={size_num}]{selected_text}[/size]")
+        has_selection = bool(selected_text)
+        replacement = f"[size={size_num}]{selected_text}[/size]"
+        cursor.insertText(replacement)
+        
+        if has_selection:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/size]") + len(selected_text))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(selected_text))
+        else:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/size]"))
+            
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def show_color_popup(self):
         btn = self.sender()
@@ -160,7 +219,18 @@ class EditorPanelComponent(QWidget):
     def apply_color_tag(self, hex_color):
         cursor = self.editor.textCursor()
         selected_text = cursor.selectedText()
-        cursor.insertText(f"[color={hex_color}]{selected_text}[/color]")
+        has_selection = bool(selected_text)
+        replacement = f"[color={hex_color}]{selected_text}[/color]"
+        cursor.insertText(replacement)
+        
+        if has_selection:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/color]") + len(selected_text))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(selected_text))
+        else:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/color]"))
+            
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def show_emoticon_popup(self):
         menu = QMenu(self)
@@ -178,21 +248,47 @@ class EditorPanelComponent(QWidget):
     def insert_emoticon_code(self, code):
         cursor = self.editor.textCursor()
         cursor.insertText(f" {code} ")
+        self.editor.setFocus()
 
     def insert_url_tag(self):
         cursor = self.editor.textCursor()
         selected_text = cursor.selectedText()
+        has_selection = bool(selected_text)
         url_text = selected_text if selected_text else "url"
-        cursor.insertText(f"[url=https://example.com]{url_text}[/url]")
+        replacement = f"[url=https://example.com]{url_text}[/url]"
+        cursor.insertText(replacement)
+        
+        if has_selection:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/url]") + len(url_text))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(url_text))
+        else:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/url]"))
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, len(url_text))
+            
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def insert_image_tag(self):
         cursor = self.editor.textCursor()
         selected_text = cursor.selectedText()
+        has_selection = bool(selected_text)
         img_url = selected_text if selected_text else "https://example.com/image.jpg"
-        cursor.insertText(f"[img=]{img_url}[/img]")
+        replacement = f"[img=]{img_url}[/img]"
+        cursor.insertText(replacement)
+        
+        if has_selection:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img]") + len(img_url))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(img_url))
+        else:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img]") + len(img_url) + len("[/img]"))
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img="))
+            
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
     def clear_formatting(self):
         cursor = self.editor.textCursor()
         selected_text = cursor.selectedText()
         clean_text = re.sub(r"\[/?\w+(?:=[^\]]+)?\]", "", selected_text)
         cursor.insertText(clean_text)
+        self.editor.setFocus()

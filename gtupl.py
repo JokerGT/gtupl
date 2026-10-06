@@ -6,7 +6,7 @@ from PyQt6.QtGui import QIcon, QFont, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QGridLayout, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QPushButton, QProgressBar,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QMessageBox
 )
 import qtawesome as qta
 
@@ -26,7 +26,56 @@ from sidebar import SidebarPanelComponent
 from csc import PreviewWorker, ProcessingWorker
 from pipeline_worker import TorrentPipelineWorker
 from dialogs import ContactSheetPreviewDialog
+from history import HistoryPanelComponent
+from datetime import datetime
 
+class Tee:
+    def __init__(self, log_dir="logs", max_files=15):
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        logs_path = os.path.join(base_dir, log_dir)
+        os.makedirs(logs_path, exist_ok=True)
+        
+        # Clean up old logs before creating the new one
+        self._cleanup_old_logs(logs_path, max_files)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_filename = f"gtupl_{timestamp}.log"
+        log_filepath = os.path.join(logs_path, log_filename)
+        
+        self.terminal = sys.stdout
+        self.log = open(log_filepath, "w", encoding="utf-8")
+
+    def _cleanup_old_logs(self, logs_path, max_files):
+        try:
+            # Find all existing log files matching the pattern
+            log_files = [
+                os.path.join(logs_path, f) for f in os.listdir(logs_path)
+                if f.startswith("gtupl_") and f.endswith(".log")
+            ]
+            # Sort by modification time (oldest first)
+            log_files.sort(key=os.path.getmtime)
+            
+            # Remove the oldest files until we leave enough room for the new one
+            while len(log_files) >= max_files:
+                oldest_file = log_files.pop(0)
+                os.remove(oldest_file)
+        except Exception:
+            # Fail silently or handle error so logging setup doesn't crash the app
+            pass
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.terminal.flush()
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 class ImageDropFilter(QObject):
     def __init__(self, parent_app):
@@ -158,7 +207,7 @@ class DarkFormApp(QMainWindow):
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(10)
 
-# --- 1. Category Section ---
+        # --- 1. Category Section ---
         cat_box = self.create_card("Category", icon_name="fa6s.folder-open")
         cat_layout = QVBoxLayout()
 
@@ -190,7 +239,7 @@ class DarkFormApp(QMainWindow):
         files_box = self.create_card("Files", icon_name="fa6s.cloud-arrow-up")
         files_layout = QVBoxLayout()
 
-        self.drop_zone = DragDropArea(self.file_manager.add_paths)
+        self.drop_zone = DragDropArea(self.handle_dropped_paths)
         self.drop_zone.reset_style()
 
         drop_layout = QVBoxLayout(self.drop_zone)
@@ -329,6 +378,8 @@ class DarkFormApp(QMainWindow):
 
         self.pics_scroll.setWidget(self.pics_container)
         
+        self.last_browsed_dir = os.path.expanduser("~")
+        
         # --- Enable Drag and Drop for Pictures Area ---
         self.pics_scroll.setAcceptDrops(True)
         self.pics_container.setAcceptDrops(True)
@@ -376,7 +427,7 @@ class DarkFormApp(QMainWindow):
         apply_input_style(self.title_input)
         self.title_input.textChanged.connect(self.update_progress)
         title_layout.addWidget(self.title_input)
-        title_layout.addWidget(QLabel("Please use descriptive names (at least 10 characters).", styleSheet="color: #7b8394; font-size: 11px;"))
+        title_layout.addWidget(QLabel("Please use descriptive names (at least 5 characters).", styleSheet="color: #7b8394; font-size: 11px;"))
 
         title_card.layout().addLayout(title_layout)
         main_layout.addWidget(title_card)
@@ -395,6 +446,7 @@ class DarkFormApp(QMainWindow):
 
         # --- Right Sidebar Panel Component ---
         self.sidebar_panel = SidebarPanelComponent(self)
+        self.history_panel = self.sidebar_panel.history_panel
         
         if hasattr(self.sidebar_panel, 'btn_start'):
             self.sidebar_panel.btn_start.clicked.connect(self.handle_start_button_clicked)
@@ -404,20 +456,13 @@ class DarkFormApp(QMainWindow):
         self.setCentralWidget(central_widget)
         self.update_progress()
     
-    def closeEvent(self, event):
-        # Perform any cleanup, stop active threads, or save preferences here
-        if hasattr(self, "sidebar") and self.sidebar:
-            self.sidebar.save_preferences()
-        
-        event.accept()
-        
     def set_main_parameters_enabled(self, enabled: bool):
         """Enable or disable all main window input fields during processing."""
         self.main_cat_combo.setEnabled(enabled)
         self.sub_cat_combo.setEnabled(enabled)
         self.drop_zone.setEnabled(enabled)
         self.btn_clear.setEnabled(enabled)
-        
+        self.pics_scroll.setEnabled(enabled)
         if hasattr(self, 'btn_file'):
             self.btn_file.setEnabled(enabled)
         if hasattr(self, 'btn_folder'):
@@ -471,10 +516,10 @@ class DarkFormApp(QMainWindow):
         cond1 = self.main_cat_combo.selected_id is not None
         cond2 = len(self.file_manager.file_data_list) > 0
         title_text = self.title_input.text()
-        cond3 = len(title_text) >= 10
+        cond3 = len(title_text) >= 5
         cond4 = len(self.picture_data_list) > 0
         desc_text = self.editor_panel.editor.toPlainText().strip()
-        cond5 = len(desc_text) >= 10
+        cond5 = len(desc_text) >= 5
 
         completed_count = sum([cond1, cond2, cond3, cond4, cond5])
 
@@ -493,15 +538,27 @@ class DarkFormApp(QMainWindow):
             self.check_lbl.setVisible(False)
 
     def browse_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Files to Include", "", "All Files (*)")
+        files, _ = QFileDialog.getOpenFileNames(
+            self, 
+            "Select Files to Include", 
+            self.last_browsed_dir, 
+            "Images and Videos (*.avif *.bmp *.gif *.heic *.heif *.jpeg *.jpg *.png *.psd *.tif *.tiff *.webp *.3gp *.asf *.asx *.avi *.bik *.divx *.flv *.m2t *.m2ts *.m2v *.m4v *.mkv *.mp4 *.mpeg *.mpg *.mov *.mts *.ogm *.ogv *.rm *.rmvb *.ts *.vob *.webm *.wmv);;"
+            "Images (*.avif *.bmp *.gif *.heic *.heif *.jpeg *.jpg *.png *.psd *.tif *.tiff *.webp );;"
+            "Videos (*.3gp *.asf *.asx *.avi *.bik *.divx *.flv *.m2t *.m2ts *.m2v *.m4v *.mkv *.mp4 *.mpeg *.mpg *.mov *.mts *.ogm *.ogv *.rm *.rmvb *.ts *.vob *.webm *.wmv);;"
+            "All Files (*)"
+        )
         if files:
+            self.last_browsed_dir = os.path.dirname(files[0])
             self.selected_folder_path = None
             self.file_manager.clear_all()
             self.file_manager.add_paths(files)
 
     def browse_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder to Include", "")
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Folder to Include", self.last_browsed_dir
+        )
         if folder:
+            self.last_browsed_dir = folder
             self.selected_folder_path = folder
             self.file_manager.clear_all()
             self.file_manager.add_paths([folder])
@@ -511,9 +568,54 @@ class DarkFormApp(QMainWindow):
         self.file_manager.clear_all()
         self.sync_pictures_from_files()
         
+        
+    def handle_dropped_paths(self, paths: list[str]):
+        if not paths:
+            return
+
+        # Determine the base/parent directory for the incoming paths
+        incoming_bases = set()
+        for p in paths:
+            if os.path.isdir(p):
+                incoming_bases.add(os.path.abspath(p))
+            else:
+                incoming_bases.add(os.path.abspath(os.path.dirname(p)))
+
+        # Rule 1: If multiple paths are dropped simultaneously, they must all belong to the same parent directory
+        if len(incoming_bases) > 1:
+            QMessageBox.warning(
+                self,
+                "Invalid Drop Selection",
+                "All dropped items must belong to the same folder or relative path structure."
+            )
+            return
+
+        incoming_base = list(incoming_bases)[0]
+
+        # Rule 2: If the file list already contains items, new drops must share the same base directory
+        if self.file_manager.file_data_list:
+            existing_item = self.file_manager.file_data_list[0]
+            existing_full_path = existing_item.get("full_path")
+            
+            if existing_full_path:
+                existing_base = os.path.abspath(os.path.dirname(existing_full_path))
+                if incoming_base != existing_base:
+                    QMessageBox.warning(
+                        self,
+                        "Path Mismatch",
+                        "Files must be on the same path. Clear the list to add this file, or use folder mode."
+                    )
+                    return
+
+        # If validation passes, proceed with adding the paths
+        self.file_manager.add_paths(paths)
+        
     def browse_pictures(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Pictures", "", "Images (*.png *.jpg *.jpeg *.bmp *.webp)")
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Pictures", self.last_browsed_dir, "Images (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
         if files:
+            self.last_browsed_dir = os.path.dirname(files[0])
             self.add_pictures(files)
 
     def is_image_file(self, path: str) -> bool:
@@ -661,9 +763,6 @@ class DarkFormApp(QMainWindow):
 
         layout.addLayout(header_row)
         return card
-
-    def on_generate_clicked(self):
-        print("Generate button clicked!")
             
     def get_custom_sidebar_settings(self):
         return {
@@ -706,9 +805,9 @@ class DarkFormApp(QMainWindow):
     def start_processing_from_sidebar(self):
         cond1 = self.main_cat_combo.selected_id is not None
         cond2 = len(self.file_manager.file_data_list) > 0
-        cond3 = len(self.title_input.text()) >= 10
+        cond3 = len(self.title_input.text()) >= 5
         cond4 = len(self.picture_data_list) > 0
-        cond5 = len(self.editor_panel.editor.toPlainText().strip()) >= 10
+        cond5 = len(self.editor_panel.editor.toPlainText().strip()) >= 5
         
         if not all([cond1, cond2, cond3, cond4, cond5]):
             return
@@ -742,6 +841,9 @@ class DarkFormApp(QMainWindow):
 
     def run_torrent_pipeline(self, create_sheets: bool, settings: dict):
         additional_assets = getattr(self, 'generated_contact_sheets', [])
+
+        if hasattr(sys.stdout, 'log') and hasattr(sys.stdout.log, 'name'):
+            settings["log_filepath"] = sys.stdout.log.name
         
         if getattr(self, 'selected_folder_path', None) and os.path.isdir(self.selected_folder_path):
             file_input = self.selected_folder_path
@@ -753,15 +855,13 @@ class DarkFormApp(QMainWindow):
                 if item.get("full_path") or item.get("path")
             ]
             mode = "files"
-
+            
+        
         main_category = self.main_cat_combo.selected_id
         sub_categories = list(self.sub_cat_combo.selected_items.keys())
         torrent_title = self.title_input.text()
         torrent_descr = self.editor_panel.editor.toPlainText()
         
-        # FINAL RE-EVALUATION:
-        # Take the current picture list, but exclude any files that were 
-        # generated as contact sheets so they aren't uploaded as web preview pictures.
         contact_sheet_set = set(additional_assets)
         filtered_pictures = [
             p for p in self.picture_data_list 
@@ -769,9 +869,10 @@ class DarkFormApp(QMainWindow):
         ]
         pictures = list(dict.fromkeys(filtered_pictures))
 
-        print(f"[UI DEBUG] Final re-evaluated web pictures to upload ({len(pictures)}):")
+        print(f"[DEBUG] TORRENT CREATION PROCESS STARTED FOR TORRENT \"{torrent_title}\"")
+        print(f"[DEBUG] Pictures to upload for torrent presentation ({len(pictures)}):")
         for idx, p in enumerate(pictures):
-            print(f"  -> [{idx}] {p}")
+            print(f"  ({idx}) {p}")
 
         self.pipeline_worker = TorrentPipelineWorker(
             file_input=file_input,
@@ -787,6 +888,7 @@ class DarkFormApp(QMainWindow):
         )
         self.pipeline_worker.progress_signal.connect(self.update_sidebar_progress)
         self.pipeline_worker.finished_signal.connect(self.on_pipeline_finished)
+        self.pipeline_worker.history_signal.connect(self.history_panel.add_run)
         self.pipeline_worker.start()
 
     def on_processing_finished(self, was_cancelled: bool = False):
@@ -825,17 +927,20 @@ class DarkFormApp(QMainWindow):
                 torrent_id = data.get("torrent_id")
                 encrypted_id = data.get("encrypted_id")
                 redirect_path = data.get("redirect")
-                
-                print(f"Successfully uploaded! Torrent ID: {torrent_id}, Redirect: {redirect_path}")
-                # You can now use torrent_id, encrypted_id, or redirect_path anywhere in your UI!
             else:
-                # Fallback just in case
                 if hasattr(self.pipeline_worker, 'temp_torrent_path'):
                     self.generated_torrent_path = self.pipeline_worker.temp_torrent_path
-        else:
-            self.sidebar_panel.lbl_file_status.setText("Upload failed or was cancelled.")
+                    
+        elif getattr(self.pipeline_worker, 'is_canceled', False):
+            self.sidebar_panel.lbl_file_status.setText("Upload was canceled.")
             self.sidebar_panel.sidebar_progress.setValue(0)
-            self.sidebar_panel.set_start_button_enabled(False)
+            self.sidebar_panel.set_start_button_enabled(True)
+            
+        else:
+            # Real failure scenario
+            self.sidebar_panel.lbl_file_status.setText("Upload failed.")
+            self.sidebar_panel.sidebar_progress.setValue(0)
+            self.sidebar_panel.set_start_button_enabled(True)
         
         self.sidebar_panel.set_parameters_enabled(True)
         self.set_main_parameters_enabled(True)            
@@ -847,6 +952,8 @@ class DarkFormApp(QMainWindow):
 
 
 if __name__ == "__main__":
+    tee_instance = Tee()
+    sys.stdout = tee_instance
     if sys.platform == "win32":
         gtupl = "gaytorrentuploader.app.1.0"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(gtupl)
@@ -871,5 +978,5 @@ if __name__ == "__main__":
         window.show()
         sys.exit(app.exec())
     else:
-        print("[App] Login failed or cancelled. Exiting application.")
+        print("[ERROR] Login failed or cancelled. Exiting application.")
         sys.exit(1)

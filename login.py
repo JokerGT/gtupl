@@ -23,15 +23,13 @@ USER_AGENT = (
 
 
 def get_stored_session() -> dict | None:
-  """Retrieve and deserialize session data from Keyring.
+  """Pure retrieval function: Fetches and deserializes session data from Keyring
 
-  Supports backward compatibility if only a raw list of cookies was previously
-  stored.
+  without side effects or logging.
   """
   try:
     data_str = keyring.get_password(SERVICE_NAME, KEYRING_USERNAME)
     if data_str:
-      print("[Keyring] Found stored session data.")
       parsed = json.loads(data_str)
       if isinstance(parsed, list):
         # Backward compatibility for older plain cookie lists
@@ -51,7 +49,7 @@ def save_session_to_keyring(cookies: list, username: str | None) -> bool:
     keyring.set_password(SERVICE_NAME, KEYRING_USERNAME, data_str)
     print(
         "[Keyring] Successfully stored updated session data (cookies +"
-        f" username: {username}) in Keyring."
+        f" username: {username}) in Keyring"
     )
     return True
   except Exception as e:
@@ -64,7 +62,7 @@ def validate_session(cookies: list) -> bool:
 
   If cookies are valid, the server redirects to index.php.
   """
-  print("[Session Check] Testing stored cookies against login.php...")
+  print("[LOGIN] Validating session...")
 
   cookie_dict = {
       cookie["name"]: cookie["value"]
@@ -90,38 +88,30 @@ def validate_session(cookies: list) -> bool:
       location = response.headers.get("Location", "")
       if "index.php" in location:
         print(
-            "[Session Check] SUCCESS! Session cookies are valid (redirected"
-            f" to {location})."
+            "[LOGIN] LOGIN SUCCESS"
         )
         return True
       else:
         print(
-            f"[Session Check] Redirected elsewhere instead of index: {location}"
+            f"[LOGIN] Web Page returned a Redirection: {location}"
         )
         return False
     elif response.status_code == 200:
-      # Staying on 200 OK means we weren't logged in, so we just loaded the login form page
       print(
-          "[Session Check] EXPIRED. Server returned 200 OK on login.php (not"
-          " logged in)."
+          "[LOGIN] EXPIRED SESSION"
       )
       return False
     else:
-      print(f"[Session Check] Failed with status code: {response.status_code}")
+      print(f"[LOGIN ERROR] Failed with HTTP response: {response.status_code}")
       return False
 
   except Exception as e:
-    print(f"[Session Check Error] Request failed: {e}")
-    return False
-
-  except Exception as e:
-    print(f"[Session Check Error] Request failed: {e}")
+    print(f"[LOGIN ERROR] Request failed: {e}")
     return False
 
 
 def fetch_username_via_curl(cookies: list) -> str | None:
-  """Fetches the username from userdetails.php using curl_cffi with existing cookies."""
-  print("[Username Fetch] Fetching username from userdetails.php via curl...")
+  print("[LOGIN] Fetching username...")
   cookie_dict = {
       cookie["name"]: cookie["value"]
       for cookie in cookies
@@ -139,33 +129,29 @@ def fetch_username_via_curl(cookies: list) -> str | None:
     )
     if response.status_code == 200:
       html_content = response.text
-      # Locate the username inside <div class="ud-profile-name">
       match = re.search(
           r'<div class="ud-profile-name">(.*?)</div>', html_content, re.DOTALL
       )
       if match:
         inner_html = match.group(1)
-        # Strip HTML tags like <img>
         clean_text = re.sub(r"<[^>]+>", "", inner_html)
         lines = [
             line.strip() for line in clean_text.splitlines() if line.strip()
         ]
         if lines:
           username = lines[0]
-          print(f"[Username Fetch] Successfully retrieved username: '{username}'")
+          print(f"[LOGIN] Successfully retrieved username: '{username}'")
           return username
     print(
-        "[Username Fetch Warning] Could not extract username from page response."
+        "[WARNING] Could not extract username from page response"
     )
   except Exception as e:
-    print(f"[Username Fetch Error] Request failed: {e}")
+    print(f"[WARNING] Request failed: {e}")
   return None
 
 
 def acquire_cookies_via_browser() -> list | None:
   """Launches SeleniumBase in UC mode, lets user log in, and closes immediately upon redirect."""
-  print("\n[Browser] Launching browser to capture fresh session cookies...")
-
 
   captured_cookies = None
 
@@ -175,27 +161,25 @@ def acquire_cookies_via_browser() -> list | None:
     sb.driver.switch_to.default_content()
 
     print("\n" + "=" * 60)
-    print("ACTION REQUIRED: Log in on the browser window.")
-    print("Waiting for redirection to gaytor.rent index page...")
+    print("[SELENIUM] ACTION REQUIRED: Log in using the browser window")
     print("=" * 60 + "\n")
 
     # Poll current URL until user logs in and gets redirected
-    timeout = 300  # 5 minutes
+    timeout = 120  # 2 minutes
     start_time = time.time()
 
     while True:
       current_url = sb.get_current_url()
 
-      # Check if landed on index.php or redirected away from login.php to main domain
       if (
           current_url.startswith(TARGET_DOMAIN)
           and "login.php" not in current_url
       ):
-        print(f"[Browser] Redirect detected! Target URL reached: {current_url}")
+        print(f"[SELENIUM] Redirect detected! Target URL reached: {current_url}")
         break
 
       if time.time() - start_time > timeout:
-        print("[Browser] Timed out waiting for login redirect.")
+        print("[SELENIUM] Timed out waiting for login redirect")
         return None
 
       time.sleep(1)
@@ -205,7 +189,7 @@ def acquire_cookies_via_browser() -> list | None:
 
     # Capture authenticated cookie snapshot
     captured_cookies = sb.driver.get_cookies()
-    print(f"[Browser] Captured {len(captured_cookies)} cookies.")
+    print(f"[SELENIUM] Captured session data")
 
   # Browser closes immediately here upon exiting the 'with' block
   return captured_cookies
@@ -217,43 +201,45 @@ def ensure_logged_in() -> bool:
   If valid, ensures username is present (fetching via curl if missing). If
   invalid/missing, runs browser login.
   """
+  # Step 1: Retrieve stored session data from keyring
   session_data = get_stored_session()
 
-  # Step 1: If session data exists, validate the cookies via HTTP request (No browser opened)
-  if session_data and validate_session(session_data.get("cookies", [])):
-    cookies = session_data.get("cookies")
-    username = session_data.get("username")
+  # Step 2: Check if session data exists and validate cookies via HTTP request
+  if session_data:
+    print("[LOGIN] Session data found in Keyring")
+    cookies = session_data.get("cookies", [])
+    
+    if validate_session(cookies):
+      username = session_data.get("username")
 
-    # Step 2: If cookies are valid but username is missing, fetch it via curl
-    if not username:
+      # Step 3: If cookies are valid but username is missing, fetch it via curl
+      if not username:
+        print(
+            "[LOGIN] Session is valid, but username is missing. Fetching username..."
+        )
+        username = fetch_username_via_curl(cookies)
+        if username:
+          save_session_to_keyring(cookies, username)
+
       print(
-          "[Main] Session is valid, but username is missing. Fetching username"
-          " via curl..."
+          f"[LOGIN] Session is valid and ready to use! Username: {username}"
       )
-      username = fetch_username_via_curl(cookies)
-      if username:
-        save_session_to_keyring(cookies, username)
+      return True
 
-    print(
-        f"\n[Main] Session is valid and ready to use! Username: {username}."
-        " Proceeding with app tasks..."
-    )
-    return True
-
-  # Step 3: If no valid session, run Selenium fallback workflow
-  print("\n[Main] No valid session found. Opening browser for login...")
+  # Step 4: If no session exists or validation failed, run Selenium fallback workflow
+  print("[LOGIN] No valid session found. Opening browser for login...")
   fresh_cookies = acquire_cookies_via_browser()
 
   if fresh_cookies:
-    # Step 4: Use curl to fetch the username post-login without disrupting app flow
+    # Step 5: Use curl to fetch the username post-login without disrupting app flow
     username = fetch_username_via_curl(fresh_cookies)
 
-    # Step 5: Persist fresh cookies and username to keyring
+    # Step 6: Persist fresh cookies and username to keyring
     save_session_to_keyring(fresh_cookies, username)
-    print("\n[Main] Setup completed successfully! Session saved to Keyring.")
+    print("[LOGIN] Session saved to Keyring")
     return True
   else:
-    print("\n[Main] Failed to acquire fresh cookies.")
+    print("[LOGIN ERROR] Failed to acquire fresh cookies")
     return False
 
 

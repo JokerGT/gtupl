@@ -5,13 +5,19 @@ GLOBAL_STYLESHEET = """
         background-color: #17191e;
         color: #d0d4dc;
     }
-
+    
+    QComboBox::drop-down {
+        border: none;
+        background: transparent;
+    }
+    
     QSpinBox {
         border: 1px solid #2a2f3a;
         border-radius: 4px;
         color: #d0d4dc;
         padding-right: 20px;
     }
+    
     QSpinBox::up-button {
         subcontrol-origin: padding;
         subcontrol-position: top right;
