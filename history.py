@@ -10,7 +10,6 @@ import base64
 import os
 
 class HistoryCipher:
-    """Simple cryptographic wrapper to encrypt/decrypt history logs locally."""
     def __init__(self, secret_key: bytes = b"gtupl_secure_history_key_2026"):
         self.secret_key = secret_key
 

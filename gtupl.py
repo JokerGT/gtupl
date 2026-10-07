@@ -1,11 +1,12 @@
 import sys
 import os
 import ctypes
+import traceback
 from PyQt6.QtCore import QSize, Qt, QTimer, QThread, QObject, QEvent
 from PyQt6.QtGui import QIcon, QFont, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QGridLayout, QFileDialog, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QPushButton, QProgressBar,
+    QLabel, QLineEdit, QListView, QMainWindow, QPushButton, QProgressBar,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QMessageBox
 )
 import qtawesome as qta
@@ -28,6 +29,23 @@ from pipeline_worker import TorrentPipelineWorker
 from dialogs import ContactSheetPreviewDialog
 from history import HistoryPanelComponent
 from datetime import datetime
+
+import base64
+import io
+from assets import ASSETS
+
+def get_asset_bytes(relative_path):
+    # Clean up any folder prefixes if passed in
+    clean_path = relative_path.replace("assets/", "").replace("assets\\", "")
+    
+    if clean_path not in ASSETS:
+        raise FileNotFoundError(f"Asset '{relative_path}' not found in assets.py")
+    
+    return base64.b64decode(ASSETS[clean_path])
+
+def get_asset_stream(relative_path):
+    """Returns an io.BytesIO stream, ideal for libraries like PIL, Pygame, or Tkinter."""
+    return io.BytesIO(get_asset_bytes(relative_path))
 
 class Tee:
     def __init__(self, log_dir="logs", max_files=15):
@@ -102,6 +120,8 @@ class DarkFormApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GayTorrent Uploader")
+        
+        # raise RuntimeError("This is a forced test crash to verify the error log.")
         
         screen_geometry = QApplication.primaryScreen().availableGeometry()
 
@@ -313,20 +333,42 @@ class DarkFormApp(QMainWindow):
 
         preview_card_layout.addLayout(list_header_layout)
 
-        self.file_scroll = QScrollArea()
-        self.file_scroll.setWidgetResizable(True)
-        self.file_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.file_list_view = QListView()
+        self.file_list_view.setStyleSheet("""
+            QListView { 
+                border: none; 
+                background-color: #14161c; 
+                border: 1px solid #2a2f3a; 
+                border-radius: 6px;
+            }
+            QListView::item {
+                color: #9aa1b1;
+                font-size: 11px;
+                font-family: Consolas, monospace;
+                padding: 4px 8px;
+                border-radius: 3px;
+            }
+            QListView::item:hover {
+                background-color: #2a2f3a;
+            }
+            QListView::item:selected {
+                background-color: #3a4150;
+            }
+        """)
+        self.file_list_view.setUniformItemSizes(True)
 
-        self.file_items_container = QWidget()
-        self.file_items_container.setStyleSheet("background: transparent;")
-        self.file_items_layout = QVBoxLayout(self.file_items_container)
-        self.file_items_layout.setContentsMargins(0, 5, 0, 5)
-        self.file_items_layout.setSpacing(4)
+        # Create and set the model
+        from file_manager import FileListModel
+        self.file_list_model = FileListModel([])
+        self.file_list_view.setModel(self.file_list_model)
 
-        self.file_scroll.setWidget(self.file_items_container)
-        preview_card_layout.addWidget(self.file_scroll)
+        # Store reference in file_manager so it can update the model
+        self.file_manager.list_model = self.file_list_model
+
+        preview_card_layout.addWidget(self.file_list_view)
 
         self.file_list_card.setVisible(False)
+        self.file_list_view.setFixedHeight(200)
         files_layout.addWidget(self.file_list_card)
 
         files_box.layout().addLayout(files_layout)
@@ -949,27 +991,64 @@ class DarkFormApp(QMainWindow):
     def update_sidebar_progress(self, value: int, status_text: str):
         self.sidebar_panel.lbl_file_status.setText(status_text)
         self.sidebar_panel.sidebar_progress.setValue(value)
+        
+def handle_exception(exc_type, exc_value, exc_traceback):
+    # Allow KeyboardInterrupt to exit normally
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
 
+    # Format the traceback text
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+    tb_text = "".join(tb_lines)
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"\n=== CRASH REPORT [{timestamp}] ===\n{tb_text}\n"
+
+    # Print to sys.stdout so your Tee class catches it and writes it to the active log file!
+    print(log_entry, file=sys.stderr)
+    
+    # Force flush if sys.stdout is our Tee instance
+    if hasattr(sys.stdout, 'flush'):
+        sys.stdout.flush()
+
+    # Show a clean PyQt error popup so the user knows it crashed
+    try:
+        app = QApplication.instance()
+        if app is not None:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Unexpected Application Crash")
+            msg.setText("The application has encountered a fatal error and needs to close.")
+            msg.setDetailedText(tb_text)
+            msg.exec()
+    except Exception:
+        pass
+
+    sys.exit(1)
+    
 
 if __name__ == "__main__":
+    sys.excepthook = handle_exception
+
     tee_instance = Tee()
     sys.stdout = tee_instance
+    sys.stderr = tee_instance  # Optional: route stderr through Tee as well so prints/errors sync up
+    
     if sys.platform == "win32":
         gtupl = "gaytorrentuploader.app.1.0"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(gtupl)
 
     app = QApplication(sys.argv)
     
-    icon_file = ("icon.png")
+    icon_file = "icon.png"
     if os.path.exists(icon_file):
         app_icon = QIcon(icon_file)
         app.setWindowIcon(app_icon)
     
-    # Run the login routine first
     from login import ensure_logged_in
     
     if ensure_logged_in():
-        # Login successful, open the main UI
         window = DarkFormApp()
         
         if os.path.exists(icon_file):

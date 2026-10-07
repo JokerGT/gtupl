@@ -1,6 +1,7 @@
 import re
-from PyQt6.QtCore import QPoint, QSize, Qt, QUrl
-from PyQt6.QtGui import QIcon, QCursor, QTextCursor, QMovie, QTextDocument
+import base64
+from PyQt6.QtCore import QPoint, QSize, Qt, QUrl, QByteArray, QBuffer, QIODevice
+from PyQt6.QtGui import QIcon, QCursor, QTextCursor, QMovie, QTextDocument, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QTextEdit, QMenu, QLabel
 )
@@ -8,6 +9,54 @@ import qtawesome as qta
 from constants import FORUM_EMOTICONS
 from utils import bbcode_to_html
 from widgets import ColorPickerPopup
+
+# Import in-memory assets dictionary
+try:
+    from assets import ASSETS
+except ImportError:
+    ASSETS = {}
+    
+def get_icon_from_asset(path):
+    """Loads a QIcon directly from the in-memory ASSETS dictionary."""
+    clean_path = path.replace("\\", "/")
+    
+    if not clean_path.startswith("smilies/") and not clean_path.startswith("assets/"):
+        clean_path = f"smilies/{clean_path}"
+    
+    clean_path = clean_path.replace("assets/", "")
+
+    if clean_path in ASSETS:
+        image_bytes = base64.b64decode(ASSETS[clean_path])
+        q_bytes = QByteArray(image_bytes)
+        pixmap = QPixmap()
+        pixmap.loadFromData(q_bytes)
+        return QIcon(pixmap)
+        
+    print(f"Asset not found in ASSETS for icon: {clean_path} (original path: {path})")
+    return QIcon()
+
+def get_movie_from_asset(path):
+    """Loads a QMovie directly from the in-memory ASSETS dictionary using QBuffer."""
+    clean_path = path.replace("\\", "/")
+    
+    if not clean_path.startswith("smilies/") and not clean_path.startswith("assets/"):
+        clean_path = f"smilies/{clean_path}"
+    
+    clean_path = clean_path.replace("assets/", "")
+
+    if clean_path in ASSETS:
+        image_bytes = base64.b64decode(ASSETS[clean_path])
+        q_bytes = QByteArray(image_bytes)
+        buffer = QBuffer(q_bytes)
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        movie = QMovie(buffer)
+        movie._buffer = buffer  # Keep buffer alive in memory
+        movie.jumpToFrame(0)    # Forces loading the first frame for menu icons
+        return movie
+        
+    print(f"Asset not found in ASSETS: {clean_path} (original path: {path})")
+    return None
+
 
 class EditorPanelComponent(QWidget):
     def __init__(self, parent_window):
@@ -113,42 +162,62 @@ class EditorPanelComponent(QWidget):
         layout.addWidget(editor_container)
         layout.addWidget(preview_container)
         
-        # Initialize active movies tracker for animations
         self._active_movies = []
 
     def update_live_preview(self):
         raw_text = self.editor.toPlainText()
-        
-        # Stop and clear previous animations
+
         for m in self._active_movies:
             m.stop()
         self._active_movies.clear()
 
         document = self.preview_box.document()
-
-        # 1. Convert BBCode to HTML first
         html_content = bbcode_to_html(raw_text)
 
-        # 2. Replace emoticon shortcodes with <img> tags AFTER HTML conversion
+        # Process forum emoticons and load their base64 GIFs from ASSETS
         for code, path in FORUM_EMOTICONS.items():
-            if code in raw_text:
-                movie = QMovie(path)
-                if movie.isValid():
-                    document.addResource(
-                        QTextDocument.ResourceType.ImageResource,
-                        QUrl(path),
-                        movie.currentPixmap()
-                    )
-                    movie.frameChanged.connect(lambda _, m=movie, p=path: (
-                        document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(p), m.currentPixmap()),
-                        self.preview_box.viewport().update()
-                    ))
-                    movie.start()
-                    self._active_movies.append(movie)
+            if code in raw_text or code in html_content:
+                clean_path = path.replace("\\", "/")
+                if not clean_path.startswith("smilies/") and not clean_path.startswith("assets/"):
+                    clean_path = f"smilies/{clean_path}"
+                clean_path = clean_path.replace("assets/", "")
 
-                # Use proportional height scaling instead of a fixed square width/height
-                img_tag = f'<img src="{path}" style="height: 20px; vertical-align: middle;" />'
-                html_content = html_content.replace(code, img_tag)
+                if clean_path in ASSETS:
+                    b64_str = ASSETS[clean_path]
+                    try:
+                        image_bytes = base64.b64decode(b64_str)
+                        q_bytes = QByteArray(image_bytes)
+                        
+                        buffer = QBuffer(q_bytes)
+                        # Keep references alive attached to the buffer object
+                        buffer._q_bytes = q_bytes 
+                        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+                        
+                        movie = QMovie(buffer, b"gif")
+                        movie._buffer = buffer  # Prevent garbage collection
+                        
+                        if movie.isValid():
+                            resource_url = QUrl(clean_path)
+                            document.addResource(
+                                QTextDocument.ResourceType.ImageResource,
+                                resource_url,
+                                movie.currentPixmap()
+                            )
+                            movie.frameChanged.connect(lambda _, m=movie, u=resource_url: (
+                                document.addResource(QTextDocument.ResourceType.ImageResource, u, m.currentPixmap()),
+                                self.preview_box.viewport().update()
+                            ))
+                            movie.start()
+                            self._active_movies.append(movie)
+
+                            img_tag = f'<img src="{clean_path}" style="height: 20px; vertical-align: middle;" />'
+                            html_content = html_content.replace(code, img_tag)
+                        else:
+                            print(f"[DEBUG] QMovie still invalid for: {clean_path}")
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to decode asset {clean_path}: {e}")
+                else:
+                    print(f"[DEBUG] Asset NOT FOUND: {clean_path}")
 
         self.preview_box.setHtml(f'<html><body style="color: #d0d4dc; font-family: sans-serif; font-size: 11pt;">{html_content}</body></html>')
 
@@ -236,7 +305,7 @@ class EditorPanelComponent(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet("background-color: #14161c; color: #d0d4dc; border: 1px solid #3a4150;")
         for code, path in sorted(FORUM_EMOTICONS.items(), key=lambda x: x[0]):
-            icon = QIcon(path)
+            icon = get_icon_from_asset(path)
             action = menu.addAction(icon, code)
             action.triggered.connect(lambda checked, c=code: self.insert_emoticon_code(c))
         button = self.sender()
@@ -283,6 +352,7 @@ class EditorPanelComponent(QWidget):
             cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img]") + len(img_url) + len("[/img]"))
             cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img="))
             
+        self.editor.setTextGenerator = None if hasattr(self.editor, 'setTextGenerator') else None
         self.editor.setTextCursor(cursor)
         self.editor.setFocus()
 

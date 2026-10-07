@@ -6,6 +6,11 @@ GLOBAL_STYLESHEET = """
         color: #d0d4dc;
     }
     
+    QToolTip {
+        color: #ffffff;
+        padding: 4px;
+    }
+    
     QComboBox::drop-down {
         border: none;
         background: transparent;

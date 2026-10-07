@@ -1,18 +1,26 @@
 import sys
 import os
 import time
+import base64
+import io
 import cv2
 import configparser
 from PIL import Image, ImageDraw, ImageFont
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except AttributeError:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+# Import in-memory assets dictionary
+try:
+    from assets import ASSETS
+except ImportError:
+    ASSETS = {}
+
+def get_asset_stream(filename):
+    """Returns an in-memory io.BytesIO stream for an asset from assets.py."""
+    clean_name = filename.replace("assets/", "").replace("assets\\", "")
+    if clean_name not in ASSETS:
+        raise FileNotFoundError(f"Asset '{filename}' not found in assets.py")
+    return io.BytesIO(base64.b64decode(ASSETS[clean_name]))
 
 def get_config_path():
     if getattr(sys, 'frozen', False):
@@ -76,11 +84,11 @@ def load_settings():
     return settings
 
 def add_files(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "Select Video Files", "", "Video Files (*.3gp *.asf *.asx *.avi *.bik *.divx *.flv *.m2t *.m2ts *.m2v *.m4v *.mkv *.mp4 *.mpeg *.mpg *.mov *.mts *.ogm *.ogv *.rm *.rmvb *.ts *.vob *.webm *.wmv)"
-        )
-        for f in files:
-            self.add_queue_item(f)
+    files, _ = QFileDialog.getOpenFileNames(
+        self, "Select Video Files", "", "Video Files (*.3gp *.asf *.asx *.avi *.bik *.divx *.flv *.m2t *.m2ts *.m2v *.m4v *.mkv *.mp4 *.mpeg *.mpg *.mov *.mts *.ogm *.ogv *.rm *.rmvb *.ts *.vob *.webm *.wmv)"
+    )
+    for f in files:
+        self.add_queue_item(f)
             
 class PreviewWorker(QThread):
     finished = pyqtSignal(object)  # Emits PIL Image or None on failure
@@ -90,17 +98,12 @@ class PreviewWorker(QThread):
         self.settings = settings if settings is not None else load_settings()
 
     def run(self):
-        assets_dir = resource_path("assets")
-        if not os.path.exists(assets_dir):
-            self.finished.emit(None)
-            return
-
+        # Read frames from the in-memory ASSETS dictionary instead of a local folder
         frame_files = []
         for i in range(1, 101):
             fname = f"frame_{i:02d}.jpg"
-            fpath = os.path.join(assets_dir, fname)
-            if os.path.exists(fpath):
-                frame_files.append(fpath)
+            if fname in ASSETS:
+                frame_files.append(fname)
 
         if not frame_files:
             self.finished.emit(None)
@@ -124,7 +127,7 @@ class PreviewWorker(QThread):
         else:
             selected_indices = [start_idx]
 
-        sample_img = Image.open(frame_files[0])
+        sample_img = Image.open(get_asset_stream(frame_files[0]))
         width, height = sample_img.size
 
         target_size = self.settings['tile_size']
@@ -141,7 +144,7 @@ class PreviewWorker(QThread):
         frames = []
         for idx in selected_indices:
             idx_clamped = min(max(0, idx), total_frames - 1)
-            img = Image.open(frame_files[idx_clamped])
+            img = Image.open(get_asset_stream(frame_files[idx_clamped]))
             img = img.resize((tile_w, tile_h), Image.Resampling.LANCZOS)
             frames.append(img)
 
@@ -155,7 +158,6 @@ class PreviewWorker(QThread):
         
         if self.settings['stamp_details'] and header_h > 0:
             header_bg_color = "#17191e"
-            text_color = (255, 255, 255)
             draw.rectangle([0, 0, grid_w, header_h], fill=header_bg_color)
 
         def middle_ellipse_text(text, font, max_width):
@@ -190,35 +192,29 @@ class PreviewWorker(QThread):
             return best_text
 
         if self.settings['stamp_details'] and header_h > 0:
-            # 1. Draw header background color (e.g., light hex theme)
             header_bg_color = "#17191e"
             draw.rectangle([0, 0, grid_w, header_h], fill=header_bg_color)
 
             x_margin = 25
             icon_target_w = 0
 
-            # 2. Handle icon scaling and positioning on the right side
-            icon_path = resource_path("assets/gtlogonew.png")  # Ensure your icon is converted to PNG
-            if os.path.exists(icon_path):
-                icon_img = Image.open(icon_path).convert("RGBA")
+            # Load header icon directly from memory if available
+            if "gtlogonew.png" in ASSETS:
+                icon_img = Image.open(get_asset_stream("gtlogonew.png")).convert("RGBA")
                 
-                # Scale to exactly 35% of the header height while maintaining the 2242x980 aspect ratio
                 icon_target_h = int(header_h * 0.35)
                 icon_aspect = icon_img.width / icon_img.height
                 icon_target_w = int(icon_target_h * icon_aspect)
                 
                 icon_img = icon_img.resize((icon_target_w, icon_target_h), Image.Resampling.LANCZOS)
                 
-                # Align vertically and place on the right with x_margin spacing
                 icon_x = grid_w - icon_target_w - x_margin
                 icon_y = (header_h - icon_target_h) // 2
                 
                 sheet.paste(icon_img, (icon_x, icon_y), icon_img)
 
-            # 3. Setup text lines
             info_lines = []
             if self.settings.get('show_filename', True):
-                # Use appropriate filename variable depending on worker context
                 filename_str = os.path.basename(file_path) if 'file_path' in locals() else "Flow.(2024).1080p.x265.4Mbps.6CH.mp4"
                 info_lines.append(f"File: {filename_str}")
 
@@ -259,11 +255,9 @@ class PreviewWorker(QThread):
                 total_text_height = (len(info_lines) * font_size) + ((len(info_lines) - 1) * line_gap)
                 y_text = int((header_h - total_text_height) / 2)
 
-                # 4. Restrict max text width so text doesn't overlap the icon
                 icon_spacing = icon_target_w + 20 if icon_target_w > 0 else 0
                 max_text_width = grid_w - x_margin - x_margin - icon_spacing
 
-                header_bg_color = "#17191e"
                 text_color = (255, 255, 255)
                 
                 for line in info_lines:
@@ -285,7 +279,7 @@ class ProcessingWorker(QThread):
     progress_updated = pyqtSignal(int, str)        
     progress_signal = pyqtSignal(int, int, float)  
     item_finished = pyqtSignal(int, bool)          
-    finished_all = pyqtSignal(bool)                # Unchanged signature
+    finished_all = pyqtSignal(bool)                
     finished = pyqtSignal()                        
 
     def __init__(self, indexed_items, settings):
@@ -293,7 +287,7 @@ class ProcessingWorker(QThread):
         self.indexed_items = indexed_items
         self.settings = settings
         self._is_cancelled = False
-        self.generated_files = []  # Initialize storage for generated assets
+        self.generated_files = []
 
     def cancel(self):
         self._is_cancelled = True
@@ -302,14 +296,13 @@ class ProcessingWorker(QThread):
         start_time = time.time()
         total_tiles_to_generate = len(self.indexed_items) * (self.settings['x_tiles'] * self.settings['y_tiles'])
         completed_tiles = 0
-        self.generated_files = []  # Reset per run
+        self.generated_files = []
 
         for original_idx, file_path in self.indexed_items:
             if self._is_cancelled:
                 break
             
             video_name = os.path.basename(file_path)
-            # Calculate percentage strictly from 0% to 50% based on tiles
             current_pct = int((completed_tiles / total_tiles_to_generate) * 50) if total_tiles_to_generate > 0 else 0
             self.progress_updated.emit(
                 current_pct, 
@@ -440,17 +433,15 @@ class ProcessingWorker(QThread):
                 return best_text
 
             if self.settings['stamp_details'] and header_h > 0:
-                # 1. Draw header background color
                 header_bg_color = "#17191e"
                 draw.rectangle([0, 0, grid_w, header_h], fill=header_bg_color)
 
                 x_margin = 25
                 icon_target_w = 0
 
-                # 2. Handle icon scaling and positioning on the right side
-                icon_path = resource_path("assets/gtlogonew.png")
-                if os.path.exists(icon_path):
-                    icon_img = Image.open(icon_path).convert("RGBA")
+                # Load header icon directly from memory if available
+                if "gtlogonew.png" in ASSETS:
+                    icon_img = Image.open(get_asset_stream("gtlogonew.png")).convert("RGBA")
                     
                     icon_target_h = int(header_h * 0.35)
                     icon_aspect = icon_img.width / icon_img.height
@@ -502,7 +493,6 @@ class ProcessingWorker(QThread):
                 total_text_height = (len(info_lines) * font_size) + ((len(info_lines) - 1) * line_gap)
                 y_text = int((header_h - total_text_height) / 2)
 
-                # 3. Restrict max text width so text doesn't overlap the icon
                 icon_spacing = icon_target_w + 20 if icon_target_w > 0 else 0
                 max_text_width = grid_w - x_margin - x_margin - icon_spacing
                 
@@ -535,7 +525,7 @@ class ProcessingWorker(QThread):
 
             out_path = os.path.join(out_dir, f"{file_stem}{ext}")
 
-            if not self.settings['overwrite'] and os.path.exists(out_path):
+            if not self.settings.get('overwrite', False) and os.path.exists(out_path):
                 counter = 1
                 while True:
                     out_path = os.path.join(out_dir, f"{file_stem}_cs{counter}{ext}")
@@ -547,17 +537,8 @@ class ProcessingWorker(QThread):
             if fmt in ('jpeg', 'jpg', 'webp'):
                 save_kwargs['quality'] = self.settings['quality']
 
-            # --- DEBUG PRINTS START ---
-            print(f"[DEBUG] About to save contact sheet to: {out_path}")
-            print(f"[DEBUG] Save parameters: {save_kwargs}")
-            # --- DEBUG PRINTS END ---
-
             sheet.save(out_path, **save_kwargs)
             generated_assets.append(out_path)
-
-            # --- DEBUG PRINT AFTER START ---
-            print(f"[DEBUG] Successfully saved file: {out_path}")
-            # --- DEBUG PRINT AFTER END ---
 
             if self.settings['save_frames']:
                 frames_dir = os.path.join(base_dir, f"{file_stem}_thumbs")

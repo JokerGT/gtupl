@@ -110,7 +110,7 @@ def _torrent_process_target(
                     except ValueError:
                         common_base = os.path.dirname(all_sources[0])
 
-                    staging_dir = os.path.join(common_base, f".qtm_staging_{int(time.time())}")
+                    staging_dir = os.path.join(common_base, f".gtupl_staging_{int(time.time())}")
                     os.makedirs(staging_dir, exist_ok=True)
                     hide_directory_as_system(staging_dir)
                     queue.put(('staging_dir', staging_dir))
@@ -171,7 +171,7 @@ def _torrent_process_target(
                 except ValueError:
                     common_base = os.path.dirname(all_valid_paths[0])
 
-                staging_dir = os.path.join(common_base, f".qtm_staging_{int(time.time())}")
+                staging_dir = os.path.join(common_base, f".gtupl_staging_{int(time.time())}")
                 os.makedirs(staging_dir, exist_ok=True)
                 hide_directory_as_system(staging_dir)
                 queue.put(('staging_dir', staging_dir))

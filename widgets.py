@@ -1,5 +1,7 @@
 import os
 import time
+import base64
+import io
 
 from PyQt6.QtCore import QByteArray, QMimeData, QPoint, QSize, Qt
 from PyQt6.QtGui import QCursor, QDrag, QDragEnterEvent, QDragMoveEvent, QDropEvent, QIcon, QPixmap
@@ -16,6 +18,23 @@ from PyQt6.QtWidgets import (
 )
 
 from constants import SCEEDITOR_COLORS
+
+# Import in-memory assets dictionary from assets.py
+try:
+    from assets import ASSETS
+except ImportError:
+    ASSETS = {}
+
+def get_pixmap_from_asset(filename):
+    """Loads a QPixmap directly from the in-memory ASSETS dictionary without disk access."""
+    clean_name = filename.replace("assets/", "").replace("assets\\", "")
+    if clean_name in ASSETS:
+        image_bytes = base64.b64decode(ASSETS[clean_name])
+        q_bytes = QByteArray(image_bytes)
+        pixmap = QPixmap()
+        pixmap.loadFromData(q_bytes)
+        return pixmap
+    return None
 
 class PopupWidget(QWidget):
     def __init__(self, parent_dropdown, *args, **kwargs):
@@ -110,22 +129,22 @@ class CategoryTile(QFrame):
         img_lbl = QLabel()
         img_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        img_path = os.path.join("assets", f"{cat_id}.jpg")
+        
+        # Load image from in-memory assets instead of disk path
+        pixmap = get_pixmap_from_asset(f"{cat_id}.jpg")
 
-        if os.path.exists(img_path):
-            pixmap = QPixmap(img_path).scaled(
+        if pixmap and not pixmap.isNull():
+            scaled_pixmap = pixmap.scaled(
                 40,
                 40,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             if is_disabled:
-                disabled_pixmap = QPixmap(pixmap.size())
-                disabled_pixmap.fill(Qt.GlobalColor.transparent)
-                img_lbl.setPixmap(pixmap)
+                img_lbl.setPixmap(scaled_pixmap)
                 img_lbl.setStyleSheet("opacity: 0.3;")
             else:
-                img_lbl.setPixmap(pixmap)
+                img_lbl.setPixmap(scaled_pixmap)
         else:
             img_lbl.setText("No Img")
             img_lbl.setStyleSheet(
@@ -247,7 +266,6 @@ class CategoryDropdown(QPushButton):
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")
         grid_layout = QGridLayout(grid_widget)
-        # Reduced spacing between tiles to make them closer together
         grid_layout.setSpacing(2)
 
         excluded_id = self.get_excluded_id()
@@ -282,9 +300,10 @@ class CategoryDropdown(QPushButton):
         self.selected_name = cat_name
         self.selected_id = cat_id
 
-        img_path = os.path.join("assets", f"{cat_id}.jpg")
-        if os.path.exists(img_path):
-            self.setIcon(QIcon(img_path))
+        # Load button icon from memory asset
+        pixmap = get_pixmap_from_asset(f"{cat_id}.jpg")
+        if pixmap and not pixmap.isNull():
+            self.setIcon(QIcon(pixmap))
             self.setIconSize(QSize(20, 20))
         self.setText(f"  {cat_name}")
 
@@ -338,9 +357,11 @@ class MultiCategoryDropdown(QPushButton):
             names = list(self.selected_items.values())
             self.setText(f"  {', '.join(names)}")
             first_id = list(self.selected_items.keys())[0]
-            img_path = os.path.join("assets", f"{first_id}.jpg")
-            if os.path.exists(img_path):
-                self.setIcon(QIcon(img_path))
+            
+            # Load icon from memory asset
+            pixmap = get_pixmap_from_asset(f"{first_id}.jpg")
+            if pixmap and not pixmap.isNull():
+                self.setIcon(QIcon(pixmap))
                 self.setIconSize(QSize(20, 20))
 
     def on_button_clicked(self):
@@ -398,7 +419,6 @@ class MultiCategoryDropdown(QPushButton):
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")
         grid_layout = QGridLayout(grid_widget)
-        # Reduced spacing between tiles to make them closer together
         grid_layout.setSpacing(2)
 
         excluded_id = self.get_excluded_id()

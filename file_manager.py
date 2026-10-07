@@ -1,8 +1,46 @@
 # file_manager.py
 
 import os
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QAbstractListModel, QModelIndex
+from PyQt6.QtWidgets import QListView
+
+class FileListModel(QAbstractListModel):
+    def __init__(self, file_data_list):
+        super().__init__()
+        self.file_data = file_data_list
+
+    def rowCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return len(self.file_data)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+
+        item = self.file_data[index.row()]
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            return f"{item['display_path']}  ({self.format_bytes(item['size'])})"
+
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return item["full_path"]
+
+        return None
+
+    def update_data(self, new_file_data):
+        self.beginResetModel()
+        self.file_data = new_file_data
+        self.endResetModel()
+
+    @staticmethod
+    def format_bytes(size: int) -> str:
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}" if unit != "B" else f"{size} B"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+
 
 class FileManagerComponent(QObject):
     def __init__(self, parent_window):
@@ -10,22 +48,26 @@ class FileManagerComponent(QObject):
         self.parent = parent_window
         self.file_data_list = []
         self.worker = None
+        self.list_model = None
+
+    @staticmethod
+    def sort_key(item):
+        display = item["display_path"]
+        depth = display.count(os.sep)
+        return (-depth, display.lower())
 
     def clear_all(self):
         self.file_data_list.clear()
+        if self.list_model:
+            self.list_model.update_data([])
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
-        elif hasattr(self.parent, "clear_all_pictures"):
-            self.parent.clear_all_pictures()
         self.parent.update_progress()
 
     def add_paths(self, paths: list[str]):
-        # Display loading state immediately on the UI thread
         self.parent.summary_label.setText("(Loading files...)")
         self.parent.file_list_card.setVisible(True)
-
-        # Launch the background thread worker to prevent UI freezing
         self.worker = FileScanWorker(paths)
         self.worker.finished.connect(self.on_scan_finished)
         self.worker.start()
@@ -38,27 +80,17 @@ class FileManagerComponent(QObject):
                 self.file_data_list.append(item)
                 existing_paths.add(item["display_path"])
 
-        self.refresh_ui()
-        if hasattr(self.parent, "sync_pictures_from_files"):
-            self.parent.sync_pictures_from_files()
-        self.parent.update_progress()
+        self.file_data_list.sort(key=self.sort_key)
 
-    def remove_file(self, display_path: str):
-        self.file_data_list = [
-            item for item in self.file_data_list if item["display_path"] != display_path
-        ]
+        if self.list_model:
+            self.list_model.update_data(self.file_data_list)
+
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
         self.parent.update_progress()
 
     def refresh_ui(self):
-        while self.parent.file_items_layout.count():
-            item = self.parent.file_items_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
         if not self.file_data_list:
             self.parent.file_list_card.setVisible(False)
             self.parent.btn_clear.setVisible(False)
@@ -72,40 +104,6 @@ class FileManagerComponent(QObject):
         self.parent.summary_label.setText(
             f"({total_files} · {self.format_bytes(total_size_bytes)})"
         )
-
-        calculated_height = (total_files * 28) + 10
-        final_height = max(36, min(calculated_height, 250))
-        self.parent.file_scroll.setFixedHeight(final_height)
-
-        for item in self.file_data_list:
-            disp_path = item["display_path"]
-            file_size = item["size"]
-
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(4, 2, 4, 2)
-
-            path_lbl = QLabel(disp_path)
-            path_lbl.setStyleSheet("color: #9aa1b1; font-size: 11px; font-family: Consolas, monospace;")
-
-            size_lbl = QLabel(self.format_bytes(file_size))
-            size_lbl.setStyleSheet("color: #7b8394; font-size: 11px; font-family: Consolas, monospace;")
-
-            remove_btn = QPushButton("×")
-            remove_btn.setFixedSize(18, 18)
-            remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            remove_btn.setStyleSheet("""
-                QPushButton { background: transparent; color: #7b8394; font-weight: bold; border: none; font-size: 14px; }
-                QPushButton:hover { color: #ef4444; }
-            """)
-            remove_btn.clicked.connect(lambda checked, dp=disp_path: self.remove_file(dp))
-
-            row_layout.addWidget(path_lbl)
-            row_layout.addStretch()
-            row_layout.addWidget(size_lbl)
-            row_layout.addWidget(remove_btn)
-
-            self.parent.file_items_layout.addWidget(row_widget)
 
     @staticmethod
     def format_bytes(size: int) -> str:
@@ -160,8 +158,7 @@ class FileScanWorker(QThread):
                                 pass
 
                 folder_items.sort(
-                    key=lambda x: (x["display_path"].count(os.sep), x["display_path"]), 
-                    reverse=True
+                    key=lambda x: (-x["display_path"].count(os.sep), x["display_path"].lower())
                 )
                 file_data_list.extend(folder_items)
 

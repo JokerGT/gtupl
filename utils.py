@@ -1,5 +1,4 @@
 import re
-from constants import FORUM_EMOTICONS
 
 def bbcode_to_html(text: str) -> str:
     safe = (
@@ -68,10 +67,6 @@ def bbcode_to_html(text: str) -> str:
 
     safe = re.sub(r"\[img=([0-9]*x?[0-9]*)\](.*?)\[/img\]", replace_img_scaled, safe, flags=re.DOTALL)
     safe = re.sub(r"\[img\](.*?)\[/img\]", r'<img src="\1" style="max-width: 100%;" />', safe, flags=re.DOTALL)
-
-    for code, url in FORUM_EMOTICONS.items():
-        escaped_code = re.escape(code)
-        safe = re.sub(escaped_code, f'<img src="{url}" width="16" height="16" />', safe)
 
     safe = safe.replace("\n", "<br>")
     return safe
