@@ -12,7 +12,9 @@
 * Option to automatically start seeding the uploaded torrent using qBittorrent (currently this is the only client supported)
 
 ### Security
-On the first launch, it uses Selenium to start a Chrome instance where you will login to your gaytorrent account. Once the login is successful, the browser will automatically close, and the session cookies will be safely stored into Windows Credential Manager, fully encrypted.
+On the first launch, the uploader asks for a personal API key. You can create one on gaytor.rent under Settings → Account → API keys; the key only allows uploads and can be revoked there at any time. It is stored securely in Windows Credential Manager via keyring. No browser is opened and no cookies are stored any more.
+
+The Logout button removes the key from Credential Manager. To disable the key itself, revoke it on the site.
 
 ### Pick Files
 Unlike other similar tools, this mode allows the user to pick one or more files from a folder without including the entire directory.

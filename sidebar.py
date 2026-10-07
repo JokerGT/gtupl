@@ -5,8 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QCheckBox, QSpinBox, QComboBox, QSlider, QStackedWidget, QProgressBar
 )
 import qtawesome as qta
-from curl_cffi import requests as cffi_requests
-from login import get_stored_session, USER_AGENT
+from login import get_stored_username, clear_api_key
 from history import HistoryPanelComponent
 
 
@@ -79,11 +78,8 @@ class SidebarPanelComponent(QWidget):
         user_profile_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         user_profile_layout.setSpacing(6)
 
-        # Fetch actual username from login session data
-        session_data = get_stored_session()
-        actual_username = session_data.get("username") if session_data else "User"
-        if not actual_username:
-            actual_username = "User"
+        # Fetch actual username stored together with the API key
+        actual_username = get_stored_username() or "User"
 
         lbl_username = QLabel(actual_username)
         lbl_username.setFont(QFont("Arial", 10, QFont.Weight.Bold))
@@ -534,28 +530,10 @@ class SidebarPanelComponent(QWidget):
         self.load_preferences()
 
     def handle_logout(self):
-        """Uses stored cookies to visit logout.php and instructs main_ui to close the app on success."""
-        session_data = get_stored_session()
-        if session_data and session_data.get("cookies"):
-            cookie_dict = {
-                cookie["name"]: cookie["value"]
-                for cookie in session_data["cookies"]
-                if "name" in cookie and "value" in cookie
-            }
-            headers = {"User-Agent": USER_AGENT}
-            try:
-                print("[LOGOUT] Trying to log out...")
-                response = cffi_requests.get(
-                    "https://www.gaytor.rent/logout.php",
-                    cookies=cookie_dict,
-                    headers=headers,
-                    impersonate="chrome",
-                    timeout=10
-                )
-                if response.status_code in (200, 301, 302):
-                    print("[LOGOUT] Logout successful")
-            except Exception as e:
-                print(f"[LOGOUT ERROR] Failed during logout request: {e}")
+        """Forgets the stored API key and instructs main_ui to close the app."""
+        print("[LOGOUT] Removing the stored API key...")
+        if clear_api_key():
+            print("[LOGOUT] Logout successful. The key stays valid on the site until you revoke it there.")
 
         if hasattr(self.parent, "close"):
             self.parent.close()

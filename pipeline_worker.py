@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import urllib.parse
 import requests
-from bs4 import BeautifulSoup
 import libtorrent as lt
 import login
 import ctypes
@@ -30,6 +29,76 @@ def hide_directory_as_system(path):
         return True
     except Exception as e:
         return False
+
+API_BASE = login.API_BASE
+
+def create_api_session(api_key=None):
+    """Returns a requests session that authenticates with the personal API key."""
+    session = requests.Session()
+    session.headers.update(login.auth_headers(api_key))
+    session.headers.update({
+        "User-Agent": login.CLIENT_NAME,
+        "Accept": "application/json"
+    })
+    return session
+
+def upload_pictures(session, pic_sources):
+    """Uploads pictures to the staging area and returns the staged picture ids."""
+    pid_list = []
+    file_tuples = []
+    opened_files = []
+
+    try:
+        print(f"[UPLOAD] Preparing pictures for upload. Total sources identified: {len(pic_sources)}")
+        for pic in pic_sources:
+            if pic and os.path.exists(pic):
+                f = open(pic, "rb")
+                opened_files.append(f)
+                file_tuples.append(("ulpic[]", (os.path.basename(pic), f, "image/jpeg")))
+                print(f"[UPLOAD] Added picture file: {pic}")
+
+        if file_tuples:
+            resp = session.post(f"{API_BASE}/uploads/pics", files=file_tuples, timeout=60)
+            print(f"[UPLOAD] Picture upload HTTP status code: {resp.status_code}")
+            data = resp.json()
+
+            if data.get("ok") and "data" in data:
+                for p in data["data"].get("pics", []):
+                    pid = str(p.get("id"))
+                    if pid and pid not in pid_list:
+                        pid_list.append(pid)
+            else:
+                print(f"[ERROR] Picture upload failed: {resp.text[:500]}")
+    finally:
+        for f in opened_files:
+            f.close()
+
+    return pid_list
+
+def post_torrent(session, torrent_path, main_category=None, sub_categories=None, torrent_title="", torrent_descr="", pid_list=()):
+    """Submits the .torrent file and its metadata, returns the HTTP response."""
+    sub_list = sub_categories or []
+    files_payload = {
+        "MAX_FILE_SIZE": (None, "75000000"),
+        "type": (None, str(main_category) if main_category is not None else "62"),
+        "scat1": (None, str(sub_list[0]) if len(sub_list) > 0 else "0"),
+        "scat2": (None, str(sub_list[1]) if len(sub_list) > 1 else "0"),
+        "scat3": (None, str(sub_list[2]) if len(sub_list) > 2 else "0"),
+        "scat4": (None, str(sub_list[3]) if len(sub_list) > 3 else "0"),
+        "name": (None, str(torrent_title) if torrent_title else "TORRENT UPLOAD TEST TITLE"),
+        "descr": (None, str(torrent_descr) if torrent_descr else "TORRENT UPLOAD TEST DESCRIPTION"),
+        "infourl": (None, "")
+    }
+
+    for pid in pid_list:
+        files_payload[f"uplpic{pid}"] = (None, pid)
+
+    print(f"[PAYLOAD] Prepared torrent metadata payload. Title: '{files_payload['name'][1]}', Main Category: {files_payload['type'][1]}")
+
+    with open(torrent_path, "rb") as tf:
+        files_payload["file"] = (os.path.basename(torrent_path), tf, "application/x-bittorrent")
+        print(f"[UPLOAD] Sending final torrent data submission to API...")
+        return session.post(f"{API_BASE}/torrents", files=files_payload, timeout=60)
 
 def _torrent_process_target(
     file_input, 
@@ -249,135 +318,49 @@ def _torrent_process_target(
         time.sleep(3.0)
 
         # --- UPLOAD WORKFLOW ---
-        queue.put(('progress', int(p_range[0]), "Connecting and fetching CSRF token..."))
-        session = requests.Session()
-        
-        cookie_dict = {}
-        try:
-            session_data = login.get_stored_session()
-            if session_data and "cookies" in session_data:
-                for cookie in session_data["cookies"]:
-                    if "name" in cookie and "value" in cookie:
-                        cookie_dict[cookie["name"]] = cookie["value"]
-        except Exception as e:
-            print(f"[ERROR] Could not fetch session from Keyring: {e}")
-
-        if not cookie_dict:
-            cookie_dict = settings.get("cookies", {})
-
-        session.cookies.update(cookie_dict)
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Referer": "https://www.gaytor.rent/doupload.php",
-            "Origin": "https://www.gaytor.rent"
-        })
-
-        try:
-            print("[UPLOAD] Sending GET request to https://www.gaytor.rent/doupload.php")
-            page_resp = session.get("https://www.gaytor.rent/doupload.php", timeout=30)
-            print(f"[UPLOAD] Upload page HTTP status: {page_resp.status_code}")
-            
-            soup = BeautifulSoup(page_resp.text, "html.parser")
-            token_meta = soup.find("meta", {"name": "csrf-token"}) or soup.find("input", {"name": "csrf-token"})
-            
-            if token_meta:
-                csrf_token = token_meta.get("content") or token_meta.get("value")
-            else:
-                match = re.search(r'["\']x-csrf-token["\']\s*:\s*["\']([a-f0-9]{64})["\']', page_resp.text)
-                csrf_token = match.group(1) if match else None
-
-            if csrf_token:
-                session.headers.update({"x-csrf-token": csrf_token})
-            else:
-                csrf_token = page_resp.headers.get("x-csrf-token")
-                if csrf_token:
-                    session.headers.update({"x-csrf-token": csrf_token})
-                else:
-                    print("[ERROR] Could not find CSRF token")
-        except Exception as e:
-            print(f"[ENDPOINT ERROR] Error fetching CSRF token: {e}")
+        session = create_api_session()
+        if "Authorization" not in session.headers:
+            raise Exception("No API key found in the system keyring. Restart the uploader to log in again.")
 
         queue.put(('progress', int(p_range[0]), "Uploading pictures..."))
-        pid_list = []
-        file_tuples = []
-        opened_files = []
-        
-        try:
-            pic_sources = pictures if pictures else additional_assets
-            print(f"[UPLOAD] Preparing pictures for upload. Total sources identified: {len(pic_sources)}")
-            for pic in pic_sources:
-                if pic and os.path.exists(pic):
-                    f = open(pic, "rb")
-                    opened_files.append(f)
-                    file_tuples.append(("ulpic[]", (os.path.basename(pic), f, "image/jpeg")))
-                    print(f"[UPLOAD] Added picture file: {pic}")
-            
-            if file_tuples:
-                resp = session.post("https://www.gaytor.rent/api/v1/uploads/pics", files=file_tuples, timeout=60)
-                print(f"[UPLOAD] Picture upload HTTP status code: {resp.status_code}")
-                data = resp.json()
-                
-                if data.get("ok") and "data" in data:
-                    for p in data["data"].get("pics", []):
-                        pid = str(p.get("id"))
-                        if pid and pid not in pid_list:
-                            pid_list.append(pid)
-        finally:
-            for f in opened_files:
-                f.close()
+        pid_list = upload_pictures(session, pictures if pictures else additional_assets)
 
         queue.put(('progress', int(u_range[0]), "Uploading torrent file and metadata..."))
-        
-        sub_list = sub_categories or []
-        files_payload = {
-            "MAX_FILE_SIZE": (None, "75000000"),
-            "type": (None, str(main_category) if main_category is not None else "62"),
-            "scat1": (None, str(sub_list[0]) if len(sub_list) > 0 else "0"),
-            "scat2": (None, str(sub_list[1]) if len(sub_list) > 1 else "0"),
-            "scat3": (None, str(sub_list[2]) if len(sub_list) > 2 else "0"),
-            "scat4": (None, str(sub_list[3]) if len(sub_list) > 3 else "0"),
-            "name": (None, str(torrent_title) if torrent_title else "TORRENT UPLOAD TEST TITLE"),
-            "descr": (None, str(torrent_descr) if torrent_descr else "TORRENT UPLOAD TEST DESCRIPTION"),
-            "infourl": (None, "")
-        }
-        
-        for pid in pid_list:
-            files_payload[f"uplpic{pid}"] = (None, pid)
+        response = post_torrent(
+            session,
+            output_file,
+            main_category=main_category,
+            sub_categories=sub_categories,
+            torrent_title=torrent_title,
+            torrent_descr=torrent_descr,
+            pid_list=pid_list
+        )
 
-        print(f"[PAYLOAD] Prepared torrent metadata payload. Title: '{files_payload['name'][1]}', Main Category: {files_payload['type'][1]}")
+        print(f"[UPLOAD] Torrent submission HTTP response status: {response.status_code}")
 
-        with open(output_file, "rb") as tf:
-            files_payload["file"] = (os.path.basename(output_file), tf, "application/x-bittorrent")
-            api_url = "https://www.gaytor.rent/api/v1/torrents"
-            print(f"[UPLOAD] Sending final torrent data submission to API...")
-            response = session.post(api_url, files=files_payload, timeout=60)
-            
-            print(f"[UPLOAD] Torrent submission HTTP response status: {response.status_code}")
+        resp_data = {}
+        try:
+            resp_data = response.json()
+        except Exception:
+            pass
 
-            resp_data = {}
+        if response.status_code != 200 or (resp_data and not resp_data.get("ok", True) and "error" in resp_data):
+            error_msg = f"Upload failed with status {response.status_code}: {response.text}"
+            print(f"[ERROR] {error_msg}")
+            raise Exception(error_msg)
+
+        torrent_info = resp_data.get("data", {})
+        torrent_id = resp_data.get("id") or torrent_info.get("id")
+        redirect_url = resp_data.get("redirect") or torrent_info.get("redirect", "")
+
+        encrypted_id = None
+        if "id=" in str(redirect_url):
             try:
-                resp_data = response.json()
+                encrypted_id = str(redirect_url).split("id=")[1].split("&")[0]
             except Exception:
                 pass
-            
-            if response.status_code != 200 or (resp_data and not resp_data.get("ok", True) and "error" in resp_data):
-                error_msg = f"Upload failed with status {response.status_code}: {response.text}"
-                print(f"[ERROR] {error_msg}")
-                raise Exception(error_msg)
-            
-            torrent_info = resp_data.get("data", {})
-            torrent_id = resp_data.get("id") or torrent_info.get("id")
-            redirect_url = resp_data.get("redirect") or torrent_info.get("redirect", "")
-            
-            encrypted_id = None
-            if "id=" in str(redirect_url):
-                try:
-                    encrypted_id = str(redirect_url).split("id=")[1].split("&")[0]
-                except Exception:
-                    pass
 
-            print(f"[UPLOAD] UPLOAD SUCCESS! Torrent ID: {torrent_id}, Details Page: {redirect_url}")
+        print(f"[UPLOAD] UPLOAD SUCCESS! Torrent ID: {torrent_id}, Details Page: {redirect_url}")
 
         # --- AUTOMATIC SEEDING WORKFLOW ---
         if settings.get("save_seeding", False) and encrypted_id:
@@ -386,17 +369,18 @@ def _torrent_process_target(
             
             queue.put(('progress', int(s_range[0]), "Downloading torrent file for seeding..."))
             try:
-                download_url = f"https://www.gaytor.rent/download.php?id={encrypted_id}"
+                token = urllib.parse.quote(encrypted_id, safe="")
+                download_url = f"{API_BASE}/torrents/by-token/{token}/download"
                 print(f"[AUTOSEED] Requesting generated torrent file download from: {download_url}")
                 
-                dl_resp = session.get(download_url, timeout=30)
+                dl_resp = session.get(download_url, headers={"Accept": "application/x-bittorrent"}, timeout=30)
                 print(f"[AUTOSEED] Download response HTTP status: {dl_resp.status_code}")
                 
                 program_dir = os.path.dirname(os.path.abspath(__file__))
                 torrents_dir = os.path.join(program_dir, "downloaded_torrents")
                 os.makedirs(torrents_dir, exist_ok=True)
                 
-                if dl_resp.status_code == 200:
+                if dl_resp.status_code == 200 and "application/x-bittorrent" in dl_resp.headers.get("Content-Type", ""):
                     seeded_torrent_path = os.path.join(torrents_dir, f"gtupl_{torrent_title_cleaned}.torrent")
                     with open(seeded_torrent_path, "wb") as f_dl:
                         f_dl.write(dl_resp.content)
@@ -445,7 +429,7 @@ def _torrent_process_target(
                         subprocess.Popen(cmd)
                         time.sleep(1.0)
                 else:
-                    print(f"[ERROR] Failed to download torrent file for seeding: HTTP {dl_resp.status_code}")
+                    print(f"[ERROR] Failed to download torrent file for seeding: HTTP {dl_resp.status_code} {dl_resp.text[:500]}")
             except Exception as e_seed:
                 print(f"[ERROR] Error starting automatic seeding: {e_seed}")
 
