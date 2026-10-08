@@ -29,6 +29,7 @@ from dialogs import ContactSheetPreviewDialog
 from history import HistoryPanelComponent
 from datetime import datetime
 
+import ctypes
 import base64
 import io
 from assets import ASSETS
@@ -856,7 +857,7 @@ class DarkFormApp(QMainWindow):
             'ignore_first': 2,
             'ignore_last': 0,
             'save_frames': False,
-            'overwrite': True
+            'overwrite': False
         }
 
     def generate_preview_from_sidebar(self):

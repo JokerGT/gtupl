@@ -318,7 +318,7 @@ class SidebarPanelComponent(QWidget):
         lbl_format = QLabel("Format:")
         lbl_format.setStyleSheet("color: #ffffff;")
         self.combo_format = QComboBox()
-        self.combo_format.addItems(["JPEG", "PNG", "WEBP"])
+        self.combo_format.addItems(["JPEG", "PNG"])
         self.combo_format.setCurrentText("JPEG")
         self.apply_input_style(self.combo_format)
         
@@ -345,7 +345,7 @@ class SidebarPanelComponent(QWidget):
         fmt_box_layout.addWidget(self.slider_quality)
 
         def on_format_changed(fmt):
-            is_lossy = fmt in ("JPEG", "WEBP")
+            is_lossy = fmt in ("JPEG")
             self.slider_quality.setEnabled(is_lossy)
             self.lbl_quality_title.setEnabled(is_lossy)
 
@@ -565,7 +565,7 @@ class SidebarPanelComponent(QWidget):
         self.combo_format.setEnabled(enabled)
         
         # Quality slider depends on format lossiness
-        is_lossy = self.combo_format.currentText() in ("JPEG", "WEBP")
+        is_lossy = self.combo_format.currentText() in ("JPEG")
         self.slider_quality.setEnabled(enabled and is_lossy)
         
         self.chk_subfolders.setEnabled(enabled)
@@ -803,7 +803,7 @@ class SidebarPanelComponent(QWidget):
             'save_seeding': self.chk_seeding.isChecked(),
             'torrent_client': self.combo_client.currentText(),
             'torrent_client_path': self.torrent_client_path,
-            'overwrite': True
+            'overwrite': False
         }
 
     def apply_input_style(self, widget: QWidget):

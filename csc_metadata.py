@@ -79,28 +79,30 @@ class CSCMetadataManager:
             "version": 1,
         }
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        # print(f"[CSC] Writing fingerprint for '{output_path}': {fingerprint}")
 
         try:
+            extension = os.path.splitext(output_path)[1].lower()
             with Image.open(output_path) as img:
-                extension = os.path.splitext(output_path)[1].lower()
-
                 if extension == ".png":
                     pnginfo = PngInfo()
                     pnginfo.add_text("gtupl_csc", serialized)
                     img.save(output_path, pnginfo=pnginfo)
                     return True
-
-                exif = img.getexif()
-                exif[0x9286] = serialized.encode("utf-8")
-                img.save(output_path, exif=exif)
-                return True
-        except Exception:
+                else:
+                    exif = img.getexif()
+                    exif[0x9286] = serialized.encode("utf-8")
+                    exif_bytes = exif.tobytes()
+                    img.save(output_path, exif=exif_bytes, comment=serialized.encode("utf-8"))
+                    return True
+        except Exception as e:
+            print(f"[CSC] Error writing fingerprint to {output_path}: {e}")
             try:
                 with Image.open(output_path) as img:
-                    img.info["comment"] = serialized
-                    img.save(output_path)
+                    img.save(output_path, comment=serialized.encode("utf-8"))
                 return True
-            except Exception:
+            except Exception as e2:
+                # print(f"[CSC] Fallback error writing fingerprint: {e2}")
                 return False
 
     def read_output_fingerprint(self, output_path: str) -> Optional[str]:
@@ -114,43 +116,49 @@ class CSCMetadataManager:
 
                 if extension == ".png":
                     raw = img.info.get("gtupl_csc")
-                    if raw is None:
-                        return None
-                    try:
-                        obj = json.loads(raw)
-                        return obj.get("fingerprint")
-                    except Exception:
-                        return None
+                    if raw is not None:
+                        try:
+                            obj = json.loads(raw)
+                            fp = obj.get("fingerprint")
+                            print(f"[CSC] Read PNG fingerprint from '{output_path}': {fp}")
+                            return fp
+                        except Exception:
+                            pass
 
                 exif = img.getexif()
                 if exif:
                     raw = exif.get(0x9286)
                     value = self._decode_exif_user_comment(raw)
-                    if value is None:
-                        raw = img.info.get("comment")
-                        value = self._decode_exif_user_comment(raw)
-                    if value is None:
-                        return None
-                    try:
-                        obj = json.loads(value)
-                        return obj.get("fingerprint")
-                    except Exception:
-                        return None
+                    if value is not None:
+                        try:
+                            obj = json.loads(value)
+                            fp = obj.get("fingerprint")
+                            # print(f"[CSC] Read EXIF fingerprint from '{output_path}': {fp}")
+                            return fp
+                        except Exception:
+                            pass
 
                 raw = img.info.get("comment")
-                if raw is None:
-                    return None
-                try:
-                    obj = json.loads(raw)
-                    return obj.get("fingerprint")
-                except Exception:
-                    return None
-        except Exception:
+                value = self._decode_exif_user_comment(raw)
+                if value is not None:
+                    try:
+                        obj = json.loads(value)
+                        fp = obj.get("fingerprint")
+                        # print(f"[CSC] Read comment fingerprint from '{output_path}': {fp}")
+                        return fp
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[CSC] Error reading fingerprint from {output_path}: {e}")
             return None
+
+        print(f"[CSC] No fingerprint found in '{output_path}'")
+        return None
 
     def is_output_valid(self, source_file: str, output_path: str, settings: Dict[str, Any]) -> tuple[bool, str]:
         """Check whether the existing output file is valid for the current source and CSC settings."""
         if not os.path.exists(output_path):
+            # print(f"[CSC] Existing output file missing: {output_path}")
             return False, "missing_output"
 
         expected = self.compute_fingerprint(source_file, settings)
@@ -159,19 +167,20 @@ class CSCMetadataManager:
 
         actual = self.read_output_fingerprint(output_path)
         if actual is None:
+            print(f"[CSC] Fingerprint missing in existing output: {output_path}")
             return False, "missing_metadata"
 
         if actual != expected:
+            print(f"[CSC] Fingerprint mismatch for: {output_path}. File will be recreated.")
             return False, "fingerprint_mismatch"
 
+        print(f"[CSC] Fingerprint matches for: {output_path}. Reusing file.")
         return True, "valid"
 
     def clear_all_metadata(self) -> bool:
-        """No-op for in-file metadata. Kept for compatibility with the existing app logic."""
         return True
 
     def cleanup(self) -> None:
-        """No-op for in-file metadata. Kept for compatibility with the existing app logic."""
         return None
 
 

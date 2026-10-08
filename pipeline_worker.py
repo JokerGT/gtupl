@@ -1,3 +1,4 @@
+# pipeline_worker.py
 from PyQt6.QtCore import QThread, pyqtSignal
 from datetime import datetime
 import multiprocessing
@@ -42,22 +43,30 @@ def create_api_session(api_key=None):
     })
     return session
 
-def upload_pictures(session, pic_sources):
+def upload_pictures(session, pic_sources, cancel_event=None):
     """Uploads pictures to the staging area and returns the staged picture ids."""
     pid_list = []
     file_tuples = []
     opened_files = []
 
     try:
+        if cancel_event and cancel_event.is_set():
+            print("[UPLOAD] Cancellation requested before processing pictures.")
+            return pid_list
+
         print(f"[UPLOAD] Preparing pictures for upload. Total sources identified: {len(pic_sources)}")
         for pic in pic_sources:
+            if cancel_event and cancel_event.is_set():
+                print("[UPLOAD] Cancellation requested during picture preparation.")
+                return pid_list
             if pic and os.path.exists(pic):
                 f = open(pic, "rb")
                 opened_files.append(f)
                 file_tuples.append(("ulpic[]", (os.path.basename(pic), f, "image/jpeg")))
                 print(f"[UPLOAD] Added picture file: {pic}")
 
-        if file_tuples:
+        if file_tuples and not (cancel_event and cancel_event.is_set()):
+            print(f"[UPLOAD] Sending picture upload request to API...")
             resp = session.post(f"{API_BASE}/uploads/pics", files=file_tuples, timeout=60)
             print(f"[UPLOAD] Picture upload HTTP status code: {resp.status_code}")
             data = resp.json()
@@ -75,8 +84,11 @@ def upload_pictures(session, pic_sources):
 
     return pid_list
 
-def post_torrent(session, torrent_path, main_category=None, sub_categories=None, torrent_title="", torrent_descr="", pid_list=()):
+def post_torrent(session, torrent_path, main_category=None, sub_categories=None, torrent_title="", torrent_descr="", pid_list=(), cancel_event=None):
     """Submits the .torrent file and its metadata, returns the HTTP response."""
+    if cancel_event and cancel_event.is_set():
+        raise Exception("Upload canceled by user.")
+
     sub_list = sub_categories or []
     files_payload = {
         "MAX_FILE_SIZE": (None, "75000000"),
@@ -98,6 +110,10 @@ def post_torrent(session, torrent_path, main_category=None, sub_categories=None,
     with open(torrent_path, "rb") as tf:
         files_payload["file"] = (os.path.basename(torrent_path), tf, "application/x-bittorrent")
         print(f"[UPLOAD] Sending final torrent data submission to API...")
+        
+        if cancel_event and cancel_event.is_set():
+            raise Exception("Upload canceled by user.")
+            
         return session.post(f"{API_BASE}/torrents", files=files_payload, timeout=60)
 
 def _torrent_process_target(
@@ -107,6 +123,7 @@ def _torrent_process_target(
     mode, 
     additional_assets, 
     queue,
+    cancel_event,
     main_category=None,
     sub_categories=None,
     torrent_title="",
@@ -143,7 +160,11 @@ def _torrent_process_target(
         sys.stderr = sys.stdout  # Also captures error tracebacks
 
     staging_dir = None
+    output_file = None
     try:
+        if cancel_event.is_set():
+            return
+
         if create_sheets:
             t_range = (50, 75)
             p_range = (76, 85)
@@ -190,6 +211,8 @@ def _torrent_process_target(
                     os.makedirs(root_folder_path, exist_ok=True)
 
                     for abs_path in all_sources:
+                        if cancel_event.is_set():
+                            return
                         try:
                             rel_path = os.path.relpath(abs_path, common_base)
                             if rel_path.startswith(".."):
@@ -251,6 +274,8 @@ def _torrent_process_target(
                 os.makedirs(root_folder_path, exist_ok=True)
 
                 for abs_path in all_valid_paths:
+                    if cancel_event.is_set():
+                        return
                     try:
                         rel_path = os.path.relpath(abs_path, common_base)
                         if rel_path.startswith(".."):
@@ -278,6 +303,9 @@ def _torrent_process_target(
         else:
             raise Exception(f"Unknown mode: {mode}")
 
+        if cancel_event.is_set():
+            return
+
         trackers = settings.get("trackers", ["http://gaytor.rent:2710/announce"])
         for tracker in trackers:
             t.add_tracker(str(tracker))
@@ -289,6 +317,8 @@ def _torrent_process_target(
         print(f"[LIBTORRENT] Total pieces to hash: {total_pieces}")
         
         def hashing_progress_callback(piece_index):
+            if cancel_event.is_set():
+                raise Exception("Hashing canceled by user.")
             if total_pieces > 0:
                 span = t_range[1] - t_range[0]
                 current_pct = t_range[0] + int(span * (piece_index / total_pieces))
@@ -296,6 +326,9 @@ def _torrent_process_target(
 
         lt.set_piece_hashes(t, str(parent_dir), hashing_progress_callback)
         print("[LIBTORRENT] Piece hashing completed successfully.")
+
+        if cancel_event.is_set():
+            return
 
         torrent_entry = t.generate()
         torrent_data = lt.bencode(torrent_entry)
@@ -315,7 +348,10 @@ def _torrent_process_target(
         
         queue.put(('output_file', output_file))
         queue.put(('progress', int(t_range[1]), "Torrent creation complete."))
-        time.sleep(3.0)
+        time.sleep(300)
+
+        if cancel_event.is_set():
+            return
 
         # --- UPLOAD WORKFLOW ---
         session = create_api_session()
@@ -323,7 +359,10 @@ def _torrent_process_target(
             raise Exception("No API key found in the system keyring. Restart the uploader to log in again.")
             
         queue.put(('progress', int(p_range[0]), "Uploading pictures..."))
-        pid_list = upload_pictures(session, pictures if pictures else additional_assets)
+        pid_list = upload_pictures(session, pictures if pictures else additional_assets, cancel_event=cancel_event)
+
+        if cancel_event.is_set():
+            return
 
         queue.put(('progress', int(u_range[0]), "Uploading torrent file and metadata..."))
         response = post_torrent(
@@ -333,10 +372,14 @@ def _torrent_process_target(
             sub_categories=sub_categories,
             torrent_title=torrent_title,
             torrent_descr=torrent_descr,
-            pid_list=pid_list
+            pid_list=pid_list,
+            cancel_event=cancel_event
         )
         
         print(f"[UPLOAD] Torrent submission HTTP response status: {response.status_code}")
+
+        if cancel_event.is_set():
+            return
 
         resp_data = {}
         try:
@@ -363,10 +406,13 @@ def _torrent_process_target(
         print(f"[UPLOAD] UPLOAD SUCCESS! Torrent ID: {torrent_id}, Details Page: {redirect_url}")
 
         # --- AUTOMATIC SEEDING WORKFLOW ---
-        if settings.get("save_seeding", False) and encrypted_id:
+        if settings.get("save_seeding", False) and encrypted_id and not cancel_event.is_set():
             queue.put(('progress', int(s_range[0]), "Waiting for torrent to register on server..."))
             time.sleep(15.0)
             
+            if cancel_event.is_set():
+                return
+
             queue.put(('progress', int(s_range[0]), "Downloading torrent file for seeding..."))
             try:
                 token = urllib.parse.quote(encrypted_id, safe="")
@@ -376,6 +422,9 @@ def _torrent_process_target(
                 dl_resp = session.get(download_url, headers={"Accept": "application/x-bittorrent"}, timeout=30)
                 print(f"[AUTOSEED] Download response HTTP status: {dl_resp.status_code}")
                 
+                if cancel_event.is_set():
+                    return
+
                 program_dir = os.path.dirname(os.path.abspath(__file__))
                 torrents_dir = os.path.join(program_dir, "downloaded_torrents")
                 os.makedirs(torrents_dir, exist_ok=True)
@@ -395,11 +444,7 @@ def _torrent_process_target(
                                 target_path = os.path.abspath(file_input[0])
                             else:
                                 target_path = os.path.abspath(str(file_input))
-                            
-                            if os.path.isfile(target_path):
-                                save_path = os.path.dirname(target_path)
-                            else:
-                                save_path = os.path.dirname(target_path)
+                            save_path = os.path.dirname(target_path)
                         elif mode == "files":
                             input_paths = [os.path.abspath(p) for p in file_input if os.path.isfile(p)]
                             if len(input_paths) == 1:
@@ -433,23 +478,25 @@ def _torrent_process_target(
             except Exception as e_seed:
                 print(f"[ERROR] Error starting automatic seeding: {e_seed}")
 
-        queue.put(('progress', int(s_range[0]), "Upload complete! Configuring cleanup..."))
-        print("[CLEANUP] Pipeline completed successfully. Dispatching finished state")
-        queue.put(('finished', True, {
-            "output_file": output_file,
-            "redirect": redirect_url
-        }))
+        if not cancel_event.is_set():
+            queue.put(('progress', int(s_range[0]), "Upload complete! Configuring cleanup..."))
+            print("[CLEANUP] Pipeline completed successfully. Dispatching finished state")
+            queue.put(('finished', True, {
+                "output_file": output_file,
+                "redirect": redirect_url
+            }))
 
     except Exception as e:
-        import traceback
-        err_trace = traceback.format_exc()
-        print(f"\n[ERROR] Pipeline failed with exception:\n{err_trace}")
-        queue.put(('finished', False, str(e)))
+        if not cancel_event.is_set():
+            import traceback
+            err_trace = traceback.format_exc()
+            print(f"\n[ERROR] Pipeline failed with exception:\n{err_trace}")
+            queue.put(('finished', False, str(e)))
     finally:
-        if 'output_file' in locals() and output_file and os.path.exists(output_file):
+        if output_file and os.path.exists(output_file):
             try:
                 os.remove(output_file)
-            except Exception as e_del:
+            except Exception:
                 pass
 
         if staging_dir and os.path.exists(staging_dir):
@@ -485,6 +532,7 @@ class TorrentPipelineWorker(QThread):
         self.torrent_descr = torrent_descr
         self.pictures = pictures or []
         self.queue = multiprocessing.Queue()
+        self.cancel_event = multiprocessing.Event()
         self.process = None
         self.temp_torrent_path = None
         self.start_time_str = None
@@ -503,6 +551,7 @@ class TorrentPipelineWorker(QThread):
                 self.mode,
                 self.additional_assets,
                 self.queue,
+                self.cancel_event,
                 self.main_category,
                 self.sub_categories,
                 self.torrent_title,
@@ -518,7 +567,7 @@ class TorrentPipelineWorker(QThread):
                     msg = self.queue.get_nowait()
                     if msg[0] == 'staging_dir':
                         self.staging_dir = msg[1]
-                    elif msg[0] == 'output_file':  # ---> ADD THIS BLOCK <---
+                    elif msg[0] == 'output_file':
                         self.output_file = msg[1]
                     elif msg[0] == 'progress' and not self.is_canceled:
                         self.progress_signal.emit(msg[1], msg[2])
@@ -535,15 +584,17 @@ class TorrentPipelineWorker(QThread):
                         if not self.is_canceled:
                             self.history_signal.emit(self.start_time_str, self.torrent_title, status, redirect_url)
                         self.finished_signal.emit(success, data)
-            except Exception as q_err:
+            except Exception:
                 pass
-            time.sleep(0.05)
+            time.sleep(3)
 
         try:
             while not self.queue.empty():
                 msg = self.queue.get_nowait()
                 if msg[0] == 'staging_dir':
                     self.staging_dir = msg[1]
+                elif msg[0] == 'output_file':
+                    self.output_file = msg[1]
                 elif msg[0] == 'progress' and not self.is_canceled:
                     self.progress_signal.emit(msg[1], msg[2])
                 elif msg[0] == 'finished':
@@ -555,26 +606,32 @@ class TorrentPipelineWorker(QThread):
                         if isinstance(data, dict):
                             redirect_url = data.get("redirect", "")
                     
-                    status = "success" if status else "failed"
+                    status = "success" if success else "failed"
                     if not self.is_canceled:
                         self.history_signal.emit(self.start_time_str, self.torrent_title, status, redirect_url)
                     self.finished_signal.emit(success, data)
-        except Exception as q_err:
+        except Exception:
             pass
 
     def cancel(self):
         print("[WORKER] Cancel command issued to worker thread.")
         self.is_canceled = True
+        self.cancel_event.set()
+
         if self.process and self.process.is_alive():
             print(f"[WORKER] Terminating active multiprocessing process PID: {self.process.pid}")
             self.process.terminate()
-            self.process.join()
+            self.process.join(timeout=1.0)
+            if self.process.is_alive():
+                self.process.kill()
         
         while not self.queue.empty():
             try:
                 msg = self.queue.get_nowait()
                 if msg[0] == 'staging_dir':
                     self.staging_dir = msg[1]
+                elif msg[0] == 'output_file':
+                    self.output_file = msg[1]
             except Exception:
                 break
 

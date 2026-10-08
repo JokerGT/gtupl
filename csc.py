@@ -10,6 +10,7 @@ import json
 from PIL import Image, ImageDraw, ImageFont
 
 from PyQt6.QtCore import QThread, pyqtSignal, QByteArray
+from PyQt6.QtWidgets import QFileDialog
 
 from csc_metadata import get_metadata_manager
 
@@ -26,7 +27,7 @@ def _warn_overwrite(output_path: str, reason: str):
         "source_unreadable": "source file is unreadable",
         "fingerprint_mismatch": "settings or source file changed",
     }.get(reason, reason)
-    print(f"[CSC] Warning: existing output '{output_path}' is not valid for the current CSC configuration ({reason_text}); it will be overwritten.")
+    # print(f"[CSC] Warning: existing output '{output_path}' is not valid for the current CSC configuration ({reason_text}); it will be overwritten.")
 
 
 def _should_skip_existing_output(file_path: str, output_path: str, settings: dict):
@@ -37,7 +38,7 @@ def _should_skip_existing_output(file_path: str, output_path: str, settings: dic
         return False, "output_missing"
 
     manager = get_metadata_manager()
-    is_valid, reason = manager.is_output_valid(file_path, settings)
+    is_valid, reason = manager.is_output_valid(file_path, output_path, settings)
     if is_valid:
         return True, "valid"
     return False, reason
@@ -359,6 +360,43 @@ class ProcessingWorker(QThread):
 
     def generate_contact_sheet(self, file_path, current_completed_tiles, total_tiles, start_time):
         target_tiles_for_file = self.settings['x_tiles'] * self.settings['y_tiles']
+        
+        # Determine expected output path first
+        base_dir = os.path.dirname(file_path)
+        raw_stem, video_ext = os.path.splitext(os.path.basename(file_path))
+        file_stem = f"{raw_stem}.{video_ext.lstrip('.').lower()}"
+
+        fmt = self.settings['format'].lower()
+        ext = ".jpg" if fmt == "jpeg" else f".{fmt}"
+
+        if self.settings['save_subfolder']:
+            out_dir = os.path.join(base_dir, "contact_sheets")
+            os.makedirs(out_dir, exist_ok=True)
+        else:
+            out_dir = base_dir
+
+        out_path = os.path.join(out_dir, f"{file_stem}{ext}")
+
+        # Check for reuse BEFORE opening the video with OpenCV
+        if not self.settings.get('overwrite', False) and os.path.exists(out_path):
+            should_skip, skip_reason = _should_skip_existing_output(file_path, out_path, self.settings)
+            if should_skip:
+                # print(f"[CSC] Reusing existing contact sheet for '{file_path}' because metadata matches current settings.")
+                return True, target_tiles_for_file, [out_path]
+            
+            if skip_reason == "fingerprint_mismatch":
+                _warn_overwrite(out_path, skip_reason)
+            else:
+                if skip_reason in {"missing_metadata", "source_unreadable"}:
+                    _warn_overwrite(out_path, skip_reason)
+
+                counter = 1
+                while True:
+                    out_path = os.path.join(out_dir, f"{file_stem}_cs{counter}{ext}")
+                    if not os.path.exists(out_path):
+                        break
+                    counter += 1
+
         generated_assets = []
         try:
             cap = cv2.VideoCapture(file_path)
@@ -540,55 +578,15 @@ class ProcessingWorker(QThread):
                 y = header_h + (row * tile_h)
                 sheet.paste(frame_img, (x, y))
 
-            base_dir = os.path.dirname(file_path)
-            raw_stem, video_ext = os.path.splitext(os.path.basename(file_path))
-            file_stem = f"{raw_stem}.{video_ext.lstrip('.').lower()}"
-
-            fmt = self.settings['format'].lower()
-            ext = ".jpg" if fmt == "jpeg" else f".{fmt}"
-
-            if self.settings['save_subfolder']:
-                out_dir = os.path.join(base_dir, "contact_sheets")
-                os.makedirs(out_dir, exist_ok=True)
-            else:
-                out_dir = base_dir
-
-            out_path = os.path.join(out_dir, f"{file_stem}{ext}")
-
-            if not self.settings.get('overwrite', False) and os.path.exists(out_path):
-                should_skip, skip_reason = _should_skip_existing_output(file_path, out_path, self.settings)
-                if should_skip:
-                    print(f"[CSC] Reusing existing contact sheet for '{file_path}' because metadata matches current settings.")
-                    return True, target_tiles_for_file, [out_path]
-                if skip_reason in {"missing_metadata", "source_unreadable", "fingerprint_mismatch"}:
-                    _warn_overwrite(out_path, skip_reason)
-
-                counter = 1
-                while True:
-                    out_path = os.path.join(out_dir, f"{file_stem}_cs{counter}{ext}")
-                    if not os.path.exists(out_path):
-                        break
-                    counter += 1
-
             # Build final output list AFTER all saves complete
             final_output_paths = []
             save_kwargs = {}
-            if fmt in ('jpeg', 'jpg', 'webp'):
+            if fmt in ('jpeg', 'jpg'):
                 save_kwargs['quality'] = self.settings['quality']
 
-            # Save main contact sheet via temp file with atomic replace
-            temp_sheet_path = out_path + ".tmp"
-            try:
-                sheet.save(temp_sheet_path, **save_kwargs)
-                os.replace(temp_sheet_path, out_path)
-                final_output_paths.append(out_path)
-            except Exception as e:
-                if os.path.exists(temp_sheet_path):
-                    try:
-                        os.remove(temp_sheet_path)
-                    except:
-                        pass
-                raise e
+            # Save main contact sheet directly
+            sheet.save(out_path, **save_kwargs)
+            final_output_paths.append(out_path)
 
             # Save individual frames if enabled
             if self.settings['save_frames']:
@@ -596,25 +594,15 @@ class ProcessingWorker(QThread):
                 os.makedirs(frames_dir, exist_ok=True)
                 for i, frame_img in enumerate(frames):
                     frame_path = os.path.join(frames_dir, f"frame_{i+1:02d}{ext}")
-                    temp_frame_path = frame_path + ".tmp"
-                    try:
-                        frame_img.save(temp_frame_path, **save_kwargs)
-                        os.replace(temp_frame_path, frame_path)
-                        final_output_paths.append(frame_path)
-                    except Exception as e:
-                        if os.path.exists(temp_frame_path):
-                            try:
-                                os.remove(temp_frame_path)
-                            except:
-                                pass
-                        raise e
+                    frame_img.save(frame_path, **save_kwargs)
+                    final_output_paths.append(frame_path)
 
-            # Write metadata ONLY after all files are successfully saved
-            get_metadata_manager().write_metadata(file_path, self.settings, final_output_paths)
+            # Write metadata directly into all generated output files
+            manager = get_metadata_manager()
+            for path in final_output_paths:
+                manager.write_output_fingerprint(file_path, path, self.settings)
+
             return True, target_tiles_for_file, final_output_paths
         except Exception as e:
             print(f"[DEBUG ERROR] Error processing {file_path}: {e}")
             return False, target_tiles_for_file, []
-
-
-# End of csc.py
