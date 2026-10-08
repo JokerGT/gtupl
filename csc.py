@@ -5,15 +5,43 @@ import base64
 import io
 import cv2
 import configparser
+import hashlib
+import json
 from PIL import Image, ImageDraw, ImageFont
 
 from PyQt6.QtCore import QThread, pyqtSignal, QByteArray
+
+from csc_metadata import get_metadata_manager
 
 # Import in-memory assets dictionary
 try:
     from assets import ASSETS
 except ImportError:
     ASSETS = {}
+
+
+def _warn_overwrite(output_path: str, reason: str):
+    reason_text = {
+        "missing_metadata": "missing CSC metadata",
+        "source_unreadable": "source file is unreadable",
+        "fingerprint_mismatch": "settings or source file changed",
+    }.get(reason, reason)
+    print(f"[CSC] Warning: existing output '{output_path}' is not valid for the current CSC configuration ({reason_text}); it will be overwritten.")
+
+
+def _should_skip_existing_output(file_path: str, output_path: str, settings: dict):
+    """Return (should_skip, reason) for an existing output file."""
+    if settings.get("overwrite", False):
+        return False, "overwrite_requested"
+    if not os.path.exists(output_path):
+        return False, "output_missing"
+
+    manager = get_metadata_manager()
+    is_valid, reason = manager.is_output_valid(file_path, settings)
+    if is_valid:
+        return True, "valid"
+    return False, reason
+
 
 def get_asset_stream(filename):
     """Returns an in-memory io.BytesIO stream for an asset from assets.py."""
@@ -22,12 +50,14 @@ def get_asset_stream(filename):
         raise FileNotFoundError(f"Asset '{filename}' not found in assets.py")
     return io.BytesIO(base64.b64decode(ASSETS[clean_name]))
 
+
 def get_config_path():
     if getattr(sys, 'frozen', False):
         app_dir = os.path.dirname(sys.executable)
     else:
         app_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(app_dir, "preferences.ini")
+
 
 def load_settings():
     settings = {
@@ -78,10 +108,11 @@ def load_settings():
                 settings['save_frames'] = s.getboolean('save_frames', settings['save_frames'])
                 settings['save_seeding'] = s.getboolean('save_seeding', settings.get('save_seeding', True))
                 settings['torrent_client'] = s.get('torrent_client', settings.get('torrent_client', 'qBittorrent'))
-        except Exception as e:
+        except Exception:
             print(f"[CSC] Failed to load preferences, setting to defaults")
 
     return settings
+
 
 def add_files(self):
     files, _ = QFileDialog.getOpenFileNames(
@@ -89,7 +120,8 @@ def add_files(self):
     )
     for f in files:
         self.add_queue_item(f)
-            
+
+
 class PreviewWorker(QThread):
     finished = pyqtSignal(object)  # Emits PIL Image or None on failure
 
@@ -155,7 +187,7 @@ class PreviewWorker(QThread):
 
         sheet = Image.new('RGB', (grid_w, grid_h + header_h), (255, 255, 255))
         draw = ImageDraw.Draw(sheet)
-        
+
         if self.settings['stamp_details'] and header_h > 0:
             header_bg_color = "#17191e"
             draw.rectangle([0, 0, grid_w, header_h], fill=header_bg_color)
@@ -198,19 +230,18 @@ class PreviewWorker(QThread):
             x_margin = 25
             icon_target_w = 0
 
-            # Load header icon directly from memory if available
             if "gtlogonew.png" in ASSETS:
                 icon_img = Image.open(get_asset_stream("gtlogonew.png")).convert("RGBA")
-                
+
                 icon_target_h = int(header_h * 0.35)
                 icon_aspect = icon_img.width / icon_img.height
                 icon_target_w = int(icon_target_h * icon_aspect)
-                
+
                 icon_img = icon_img.resize((icon_target_w, icon_target_h), Image.Resampling.LANCZOS)
-                
+
                 icon_x = grid_w - icon_target_w - x_margin
                 icon_y = (header_h - icon_target_h) // 2
-                
+
                 sheet.paste(icon_img, (icon_x, icon_y), icon_img)
 
             info_lines = []
@@ -259,7 +290,7 @@ class PreviewWorker(QThread):
                 max_text_width = grid_w - x_margin - x_margin - icon_spacing
 
                 text_color = (255, 255, 255)
-                
+
                 for line in info_lines:
                     display_line = middle_ellipse_text(line, font, max_text_width)
                     draw.text((x_margin, y_text), display_line, fill=text_color, font=font)
@@ -276,11 +307,11 @@ class PreviewWorker(QThread):
 
 
 class ProcessingWorker(QThread):
-    progress_updated = pyqtSignal(int, str)        
-    progress_signal = pyqtSignal(int, int, float)  
-    item_finished = pyqtSignal(int, bool)          
-    finished_all = pyqtSignal(bool)                
-    finished = pyqtSignal()                        
+    progress_updated = pyqtSignal(int, str)
+    progress_signal = pyqtSignal(int, int, float)
+    item_finished = pyqtSignal(int, bool)
+    finished_all = pyqtSignal(bool)
+    finished = pyqtSignal()
 
     def __init__(self, indexed_items, settings):
         super().__init__()
@@ -301,11 +332,11 @@ class ProcessingWorker(QThread):
         for original_idx, file_path in self.indexed_items:
             if self._is_cancelled:
                 break
-            
+
             video_name = os.path.basename(file_path)
             current_pct = int((completed_tiles / total_tiles_to_generate) * 50) if total_tiles_to_generate > 0 else 0
             self.progress_updated.emit(
-                current_pct, 
+                current_pct,
                 f"Processing: {video_name}"
             )
 
@@ -313,10 +344,10 @@ class ProcessingWorker(QThread):
                 file_path, completed_tiles, total_tiles_to_generate, start_time
             )
             completed_tiles += tiles_done
-            
+
             if success:
                 self.generated_files.extend(file_assets)
-            
+
             if self._is_cancelled:
                 break
 
@@ -423,7 +454,7 @@ class ProcessingWorker(QThread):
                     head = name[:mid]
                     tail = name[-mid:] + ext
                     candidate = f"{head}{ellipsis}{tail}"
-                    
+
                     if get_w(candidate) <= max_width:
                         best_text = candidate
                         low = mid + 1
@@ -439,19 +470,18 @@ class ProcessingWorker(QThread):
                 x_margin = 25
                 icon_target_w = 0
 
-                # Load header icon directly from memory if available
                 if "gtlogonew.png" in ASSETS:
                     icon_img = Image.open(get_asset_stream("gtlogonew.png")).convert("RGBA")
-                    
+
                     icon_target_h = int(header_h * 0.35)
                     icon_aspect = icon_img.width / icon_img.height
                     icon_target_w = int(icon_target_h * icon_aspect)
-                    
+
                     icon_img = icon_img.resize((icon_target_w, icon_target_h), Image.Resampling.LANCZOS)
-                    
+
                     icon_x = grid_w - icon_target_w - x_margin
                     icon_y = (header_h - icon_target_h) // 2
-                    
+
                     sheet.paste(icon_img, (icon_x, icon_y), icon_img)
 
                 info_lines = []
@@ -495,7 +525,7 @@ class ProcessingWorker(QThread):
 
                 icon_spacing = icon_target_w + 20 if icon_target_w > 0 else 0
                 max_text_width = grid_w - x_margin - x_margin - icon_spacing
-                
+
                 text_color = (255, 255, 255)
 
                 for line in info_lines:
@@ -513,7 +543,7 @@ class ProcessingWorker(QThread):
             base_dir = os.path.dirname(file_path)
             raw_stem, video_ext = os.path.splitext(os.path.basename(file_path))
             file_stem = f"{raw_stem}.{video_ext.lstrip('.').lower()}"
-            
+
             fmt = self.settings['format'].lower()
             ext = ".jpg" if fmt == "jpeg" else f".{fmt}"
 
@@ -526,6 +556,13 @@ class ProcessingWorker(QThread):
             out_path = os.path.join(out_dir, f"{file_stem}{ext}")
 
             if not self.settings.get('overwrite', False) and os.path.exists(out_path):
+                should_skip, skip_reason = _should_skip_existing_output(file_path, out_path, self.settings)
+                if should_skip:
+                    print(f"[CSC] Reusing existing contact sheet for '{file_path}' because metadata matches current settings.")
+                    return True, target_tiles_for_file, [out_path]
+                if skip_reason in {"missing_metadata", "source_unreadable", "fingerprint_mismatch"}:
+                    _warn_overwrite(out_path, skip_reason)
+
                 counter = 1
                 while True:
                     out_path = os.path.join(out_dir, f"{file_stem}_cs{counter}{ext}")
@@ -533,22 +570,31 @@ class ProcessingWorker(QThread):
                         break
                     counter += 1
 
+            final_output_paths = []
             save_kwargs = {}
             if fmt in ('jpeg', 'jpg', 'webp'):
                 save_kwargs['quality'] = self.settings['quality']
 
-            sheet.save(out_path, **save_kwargs)
-            generated_assets.append(out_path)
+            temp_sheet_path = out_path + ".tmp"
+            sheet.save(temp_sheet_path, **save_kwargs)
+            os.replace(temp_sheet_path, out_path)
+            final_output_paths.append(out_path)
 
             if self.settings['save_frames']:
                 frames_dir = os.path.join(base_dir, f"{file_stem}_thumbs")
                 os.makedirs(frames_dir, exist_ok=True)
                 for i, frame_img in enumerate(frames):
                     frame_path = os.path.join(frames_dir, f"frame_{i+1:02d}{ext}")
-                    frame_img.save(frame_path, **save_kwargs)
-                    generated_assets.append(frame_path)
+                    temp_frame_path = frame_path + ".tmp"
+                    frame_img.save(temp_frame_path, **save_kwargs)
+                    os.replace(temp_frame_path, frame_path)
+                    final_output_paths.append(frame_path)
 
-            return True, target_tiles_for_file, generated_assets
+            get_metadata_manager().write_metadata(file_path, self.settings, final_output_paths)
+            return True, target_tiles_for_file, final_output_paths
         except Exception as e:
             print(f"[DEBUG ERROR] Error processing {file_path}: {e}")
             return False, target_tiles_for_file, []
+
+
+# End of csc.py
