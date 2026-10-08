@@ -29,7 +29,7 @@ Every task is logged to the History panel, keeping date, time, torrent title, ta
 Once one or more videos are added to the file list, a button appears that allows creating previews for torrent presentation.
 It allows to add still frames or contact sheets, those are added to the torrent page only, not to the torrent content.
 
-The amount of still frames for each file depends on total of videos included in the torrent content:
+The amount of still frames for each file depends on total of videos included in the torrent content:<br/>
 1 video = 5 still frames<br/>
 2 to 5 videos = 3 still frames<br/>
 6 or more = 1 still frame
