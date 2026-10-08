@@ -1,8 +1,8 @@
-# file_manager.py
-
 import os
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QAbstractListModel, QModelIndex
 from PyQt6.QtWidgets import QListView
+
+from csc_metadata import get_metadata_manager
 
 class FileListModel(QAbstractListModel):
     def __init__(self, file_data_list):
@@ -63,6 +63,7 @@ class FileManagerComponent(QObject):
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
+        get_metadata_manager().clear_all_metadata()
         self.parent.update_progress()
 
     def add_paths(self, paths: list[str]):
@@ -88,8 +89,7 @@ class FileManagerComponent(QObject):
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
-        
-        # Force a complete update including validation
+
         self.parent.update_progress()
 
     def refresh_ui(self):
