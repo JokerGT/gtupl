@@ -33,3 +33,5 @@ The amount of still frames for each file depends on total of videos included in 
 1 video = 5 still frames<br/>
 2 to 5 videos = 3 still frames<br/>
 6 or more = 1 still frame
+
+Individual frames can be included as part of the torrent content with no limitation using the sidebar settings.
