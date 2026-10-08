@@ -9,7 +9,7 @@
 * Option to automatically generate pictures for torrent presentation based on the torrent files.
 * Allows uploading to categories that the user has blocked for convenience.
 * History panel with previous runs, their status & download link.
-* Has a built-in highly customizable Contact Sheet creator (can create contact sheets and individual thumbnail frames).
+* Has a built-in highly customizable Contact Sheet & still frames generator.
 * Option to automatically start seeding the uploaded torrent using qBittorrent or uTorrent.
 
 ### Security
