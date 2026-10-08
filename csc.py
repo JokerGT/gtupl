@@ -570,26 +570,46 @@ class ProcessingWorker(QThread):
                         break
                     counter += 1
 
+            # Build final output list AFTER all saves complete
             final_output_paths = []
             save_kwargs = {}
             if fmt in ('jpeg', 'jpg', 'webp'):
                 save_kwargs['quality'] = self.settings['quality']
 
+            # Save main contact sheet via temp file with atomic replace
             temp_sheet_path = out_path + ".tmp"
-            sheet.save(temp_sheet_path, **save_kwargs)
-            os.replace(temp_sheet_path, out_path)
-            final_output_paths.append(out_path)
+            try:
+                sheet.save(temp_sheet_path, **save_kwargs)
+                os.replace(temp_sheet_path, out_path)
+                final_output_paths.append(out_path)
+            except Exception as e:
+                if os.path.exists(temp_sheet_path):
+                    try:
+                        os.remove(temp_sheet_path)
+                    except:
+                        pass
+                raise e
 
+            # Save individual frames if enabled
             if self.settings['save_frames']:
                 frames_dir = os.path.join(base_dir, f"{file_stem}_thumbs")
                 os.makedirs(frames_dir, exist_ok=True)
                 for i, frame_img in enumerate(frames):
                     frame_path = os.path.join(frames_dir, f"frame_{i+1:02d}{ext}")
                     temp_frame_path = frame_path + ".tmp"
-                    frame_img.save(temp_frame_path, **save_kwargs)
-                    os.replace(temp_frame_path, frame_path)
-                    final_output_paths.append(frame_path)
+                    try:
+                        frame_img.save(temp_frame_path, **save_kwargs)
+                        os.replace(temp_frame_path, frame_path)
+                        final_output_paths.append(frame_path)
+                    except Exception as e:
+                        if os.path.exists(temp_frame_path):
+                            try:
+                                os.remove(temp_frame_path)
+                            except:
+                                pass
+                        raise e
 
+            # Write metadata ONLY after all files are successfully saved
             get_metadata_manager().write_metadata(file_path, self.settings, final_output_paths)
             return True, target_tiles_for_file, final_output_paths
         except Exception as e:
