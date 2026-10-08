@@ -62,8 +62,8 @@ def get_config_path():
 
 def load_settings():
     settings = {
-        'x_tiles': 5,
-        'y_tiles': 4,
+        'x_tiles': 4,
+        'y_tiles': 3,
         'tile_size': 512,
         'auto_size': True,
         'orig_size': False,
@@ -80,7 +80,7 @@ def load_settings():
         'save_subfolder': True,
         'save_frames': False,
         'save_seeding': True,
-        'torrent_client': 'qBittorrent'
+        'create_contact_sheet': True
     }
 
     config_path = get_config_path()
@@ -108,7 +108,6 @@ def load_settings():
                 settings['save_subfolder'] = s.getboolean('save_subfolder', settings['save_subfolder'])
                 settings['save_frames'] = s.getboolean('save_frames', settings['save_frames'])
                 settings['save_seeding'] = s.getboolean('save_seeding', settings.get('save_seeding', True))
-                settings['torrent_client'] = s.get('torrent_client', settings.get('torrent_client', 'qBittorrent'))
         except Exception:
             print(f"[CSC] Failed to load preferences, setting to defaults")
 
@@ -369,16 +368,21 @@ class ProcessingWorker(QThread):
         fmt = self.settings['format'].lower()
         ext = ".jpg" if fmt == "jpeg" else f".{fmt}"
 
-        if self.settings['save_subfolder']:
-            out_dir = os.path.join(base_dir, "contact_sheets")
+        custom_out_dir = self.settings.get('custom_output_dir')
+        if custom_out_dir:
+            out_dir = custom_out_dir
             os.makedirs(out_dir, exist_ok=True)
         else:
-            out_dir = base_dir
+            if self.settings['save_subfolder']:
+                out_dir = os.path.join(base_dir, "contact_sheets")
+                os.makedirs(out_dir, exist_ok=True)
+            else:
+                out_dir = base_dir
 
         out_path = os.path.join(out_dir, f"{file_stem}{ext}")
 
         # Check for reuse BEFORE opening the video with OpenCV
-        if not self.settings.get('overwrite', False) and os.path.exists(out_path):
+        if self.settings.get('create_contact_sheet', True) and not self.settings.get('overwrite', False) and os.path.exists(out_path):
             should_skip, skip_reason = _should_skip_existing_output(file_path, out_path, self.settings)
             if should_skip:
                 # print(f"[CSC] Reusing existing contact sheet for '{file_path}' because metadata matches current settings.")
@@ -584,16 +588,23 @@ class ProcessingWorker(QThread):
             if fmt in ('jpeg', 'jpg'):
                 save_kwargs['quality'] = self.settings['quality']
 
-            # Save main contact sheet directly
-            sheet.save(out_path, **save_kwargs)
-            final_output_paths.append(out_path)
+            # Save main contact sheet directly if enabled
+            if self.settings.get('create_contact_sheet', True):
+                sheet.save(out_path, **save_kwargs)
+                final_output_paths.append(out_path)
 
             # Save individual frames if enabled
             if self.settings['save_frames']:
-                frames_dir = os.path.join(base_dir, f"{file_stem}_thumbs")
+                if custom_out_dir:
+                    frames_dir = custom_out_dir
+                else:
+                    frames_dir = os.path.join(base_dir, f"{file_stem}_thumbs")
                 os.makedirs(frames_dir, exist_ok=True)
                 for i, frame_img in enumerate(frames):
-                    frame_path = os.path.join(frames_dir, f"frame_{i+1:02d}{ext}")
+                    if self.settings.get('torrent_frames_naming', False):
+                        frame_path = os.path.join(frames_dir, f"{file_stem}_frame{i+1}{ext}")
+                    else:
+                        frame_path = os.path.join(frames_dir, f"frame_{i+1:02d}{ext}")
                     frame_img.save(frame_path, **save_kwargs)
                     final_output_paths.append(frame_path)
 

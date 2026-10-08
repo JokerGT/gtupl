@@ -63,6 +63,10 @@ class FileManagerComponent(QObject):
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
+        if hasattr(self.parent, "clear_torrent_derived_pictures"):
+            self.parent.clear_torrent_derived_pictures()
+        if hasattr(self.parent, "update_torrent_video_button_visibility"):
+            self.parent.update_torrent_video_button_visibility()
         get_metadata_manager().clear_all_metadata()
         self.parent.update_progress()
 
@@ -89,6 +93,8 @@ class FileManagerComponent(QObject):
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
+        if hasattr(self.parent, "update_torrent_video_button_visibility"):
+            self.parent.update_torrent_video_button_visibility()
 
         self.parent.update_progress()
 

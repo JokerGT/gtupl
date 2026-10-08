@@ -4,7 +4,7 @@ import traceback
 from PyQt6.QtCore import QSize, Qt, QTimer, QThread, QObject, QEvent, QByteArray
 from PyQt6.QtGui import QIcon, QFont, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QGridLayout, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QDialog, QGridLayout, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListView, QMainWindow, QPushButton, QProgressBar,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QMessageBox
 )
@@ -28,12 +28,15 @@ from pipeline_worker import TorrentPipelineWorker
 from dialogs import ContactSheetPreviewDialog
 from history import HistoryPanelComponent
 from datetime import datetime
+import tempfile
+import shutil
 
 import ctypes
 import base64
 import io
 from assets import ASSETS
 from csc_metadata import get_metadata_manager
+from torrent_pictures_dialog import AddFromTorrentDialog, TorrentPicturesProcessingWorker, VALID_VIDEO_EXTENSIONS
 
 
 def get_asset_bytes(relative_path):
@@ -139,6 +142,7 @@ class DarkFormApp(QMainWindow):
         self.generated_contact_sheets = []
         self._last_validation_errors = []
 
+        # Initialize file manager here before using it
         self.file_manager = FileManagerComponent(self)
         self.setStyleSheet(GLOBAL_STYLESHEET)
 
@@ -428,6 +432,17 @@ class DarkFormApp(QMainWindow):
         self.btn_clear_pics.clicked.connect(self.clear_all_pictures)
         self.btn_clear_pics.setVisible(False)
 
+        self.torrent_derived_pictures = set()
+
+        self.btn_add_from_torrent = QPushButton("Add from torrent files")
+        self.btn_add_from_torrent.setIcon(qta.icon("fa6s.film", color="#d0d4dc"))
+        self.btn_add_from_torrent.setStyleSheet("""
+            QPushButton { background-color: #1e222b; border: 1px solid #3a4150; color: #d0d4dc; border-radius: 4px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #2a2f3d; }
+        """)
+        self.btn_add_from_torrent.clicked.connect(self.open_add_from_torrent_dialog)
+        self.btn_add_from_torrent.setVisible(False)
+
         self.btn_add_pics = QPushButton(" Add pictures")
         self.btn_add_pics.setIcon(qta.icon("fa6s.image", color="#d0d4dc"))
         self.btn_add_pics.setStyleSheet("""
@@ -437,6 +452,7 @@ class DarkFormApp(QMainWindow):
         self.btn_add_pics.clicked.connect(self.browse_pictures)
 
         pics_btn_row.addWidget(self.btn_clear_pics)
+        pics_btn_row.addWidget(self.btn_add_from_torrent)
         pics_btn_row.addWidget(self.btn_add_pics)
         pics_layout.addLayout(pics_btn_row)
 
@@ -467,6 +483,7 @@ class DarkFormApp(QMainWindow):
         root_layout.addLayout(left_column_layout, stretch=3)
 
         self.is_processing = False
+        self.is_generating_torrent_pics = False
 
         self.sidebar_panel = SidebarPanelComponent(self)
         self.history_panel = self.sidebar_panel.history_panel
@@ -546,9 +563,10 @@ class DarkFormApp(QMainWindow):
         return len(errors) == 0, errors
 
     def cancel_processing(self):
+        if hasattr(self, 'preparation_timer') and self.preparation_timer.isActive():
+            self.preparation_timer.stop()
         if hasattr(self, 'processing_worker') and self.processing_worker.isRunning():
             self.processing_worker.cancel()
-
         if hasattr(self, 'pipeline_worker') and self.pipeline_worker.isRunning():
             self.pipeline_worker.cancel()
 
@@ -564,6 +582,7 @@ class DarkFormApp(QMainWindow):
         if hasattr(self, 'sidebar_panel') and hasattr(self.sidebar_panel, 'save_preferences'):
             self.sidebar_panel.save_preferences()
         get_metadata_manager().cleanup()
+        self.cleanup_temp_pics()
         event.accept()
 
     def update_tile_progress(self, current_tile: int, total_tiles: int, elapsed: float):
@@ -575,7 +594,9 @@ class DarkFormApp(QMainWindow):
         self.sidebar_panel.sidebar_progress.setValue(percentage)
 
     def update_progress(self):
-        if getattr(self, 'is_processing', False):
+        if getattr(self, 'is_processing', False) or getattr(self, 'is_generating_torrent_pics', False):
+            if hasattr(self.sidebar_panel, 'set_start_button_enabled'):
+                self.sidebar_panel.set_start_button_enabled(False)
             return
 
         is_valid, error_messages = self.validate_before_processing()
@@ -633,7 +654,10 @@ class DarkFormApp(QMainWindow):
             self.last_browsed_dir = os.path.dirname(files[0])
             self.selected_folder_path = None
             self.file_manager.clear_all()
+            self.clear_torrent_derived_pictures()
+            self.cleanup_temp_pics()
             self.file_manager.add_paths(files)
+            self.update_torrent_video_button_visibility()
 
     def browse_folder(self):
         folder = QFileDialog.getExistingDirectory(
@@ -643,12 +667,26 @@ class DarkFormApp(QMainWindow):
             self.last_browsed_dir = folder
             self.selected_folder_path = folder
             self.file_manager.clear_all()
+            self.clear_torrent_derived_pictures()
+            self.cleanup_temp_pics()
             self.file_manager.add_paths([folder])
+            self.update_torrent_video_button_visibility()
 
     def clear_file_list(self):
         self.selected_folder_path = None
         self.file_manager.clear_all()
+        self.clear_torrent_derived_pictures()
+        self.cleanup_temp_pics()
         self.sync_pictures_from_files()
+        self.update_torrent_video_button_visibility()
+        
+    def cleanup_temp_pics(self):
+        temp_dir = os.path.join(tempfile.gettempdir(), "gtupl_temp_pics")
+        if os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"[DEBUG] Failed to delete temporary pics directory: {e}")
 
     def handle_dropped_paths(self, paths: list[str]):
         if not paths:
@@ -744,6 +782,8 @@ class DarkFormApp(QMainWindow):
         self.picture_data_list.clear()
         self.auto_synced_pictures.clear()
         self.pixmap_cache.clear()
+        self.torrent_derived_pictures.clear()
+        self.cleanup_temp_pics()
         self.refresh_pictures_ui()
         self.update_progress()
 
@@ -1009,7 +1049,10 @@ class DarkFormApp(QMainWindow):
             self.sidebar_panel.lbl_file_status.setText("Contact sheets created. Preparing torrent...")
             create_sheets = self.sidebar_panel.chk_create_contact_sheets.isChecked()
 
-            QTimer.singleShot(3000, lambda: self.run_torrent_pipeline(create_sheets, settings))
+            self.preparation_timer = QTimer(self)
+            self.preparation_timer.setSingleShot(True)
+            self.preparation_timer.timeout.connect(lambda: self.run_torrent_pipeline(create_sheets, settings))
+            self.preparation_timer.start(3000)
 
     def on_pipeline_finished(self, success: bool, data=None):
         self.is_processing = False
@@ -1045,6 +1088,62 @@ class DarkFormApp(QMainWindow):
     def update_sidebar_progress(self, value: int, status_text: str):
         self.sidebar_panel.lbl_file_status.setText(status_text)
         self.sidebar_panel.sidebar_progress.setValue(value)
+        
+    def update_torrent_video_button_visibility(self):
+        has_valid = any(
+            (item.get("full_path") or item.get("path") or "").lower().endswith(VALID_VIDEO_EXTENSIONS)
+            for item in self.file_manager.file_data_list
+        )
+        self.btn_add_from_torrent.setVisible(has_valid)
+
+    def open_add_from_torrent_dialog(self):
+        valid_items = [
+            item for item in self.file_manager.file_data_list
+            if (item.get("full_path") or item.get("path") or "").lower().endswith(VALID_VIDEO_EXTENSIONS)
+        ]
+        
+        dlg = AddFromTorrentDialog(valid_items, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            selected_paths = dlg.get_selected_items()
+            options = dlg.get_options()
+            if not selected_paths:
+                return
+            
+            indexed_items = [
+                (idx, item.get("full_path") or item.get("path"))
+                for idx, item in enumerate(self.file_manager.file_data_list)
+                if (item.get("full_path") or item.get("path")) in selected_paths
+            ]
+            
+            settings = self.sidebar_panel.get_sidebar_settings()
+            # Enable safeguard flag and update UI button state immediately
+            self.is_generating_torrent_pics = True
+            self.update_progress()
+            
+            self.sidebar_panel.lbl_file_status.setText("Generating pictures from torrent files...")
+            self.torrent_worker = TorrentPicturesProcessingWorker(indexed_items, settings, options)
+            self.torrent_worker.finished.connect(self.on_torrent_pictures_finished)
+            self.torrent_worker.start()
+
+    def on_torrent_pictures_finished(self, generated_paths: list):
+        self.is_generating_torrent_pics = False  # Clear safeguard flag
+        self.sidebar_panel.lbl_file_status.setText("Ready")
+        if generated_paths:
+            for p in generated_paths:
+                self.torrent_derived_pictures.add(p)
+            self.add_pictures(generated_paths)
+        
+        self.update_progress()
+
+    def clear_torrent_derived_pictures(self):
+        for p in list(self.torrent_derived_pictures):
+            if p in self.picture_data_list:
+                self.picture_data_list.remove(p)
+            if p in self.pixmap_cache:
+                del self.pixmap_cache[p]
+        self.torrent_derived_pictures.clear()
+        self.refresh_pictures_ui()
+        self.update_progress()
 
 
 def handle_exception(exc_type, exc_value, exc_traceback):

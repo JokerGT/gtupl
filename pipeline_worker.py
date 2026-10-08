@@ -348,7 +348,7 @@ def _torrent_process_target(
         
         queue.put(('output_file', output_file))
         queue.put(('progress', int(t_range[1]), "Torrent creation complete."))
-        time.sleep(300)
+        time.sleep(10)
 
         if cancel_event.is_set():
             return
@@ -438,7 +438,7 @@ def _torrent_process_target(
                     client_path = settings.get("torrent_client_path", "")
                     client_name = settings.get("torrent_client", "")
                     
-                    if client_path and client_path != "WebUI" and os.path.exists(client_path):
+                    if client_path and os.path.exists(client_path):
                         if mode == "folder":
                             if isinstance(file_input, (list, tuple)):
                                 target_path = os.path.abspath(file_input[0])
@@ -461,15 +461,24 @@ def _torrent_process_target(
                                 save_path = os.path.dirname(save_path)
                             else:
                                 save_path = os.path.dirname(save_path)
-
-                        cmd = [
-                            client_path,
-                            "--skip-dialog=true",
-                            f"--save-path={save_path}",
-                            "--seed-mode",
-                            seeded_torrent_path
-                        ]
-                        
+                       
+                        if client_name == "qBittorrent":
+                                
+                            cmd = [
+                                client_path,
+                                "--skip-dialog=true",
+                                f"--save-path={save_path}",
+                                "--seed-mode",
+                                seeded_torrent_path
+                            ]
+                        elif client_name == "uTorrent":
+                            cmd = [
+                                client_path,
+                                "/directory",
+                                save_path,
+                                seeded_torrent_path
+                            ]
+                            
                         queue.put(('progress', int(s_range[0]), f"Launching {client_name} for seeding..."))
                         subprocess.Popen(cmd)
                         time.sleep(1.0)

@@ -1,16 +1,37 @@
 # styles.py
 
 GLOBAL_STYLESHEET = """
-    QMainWindow {
+    QMainWindow, QDialog, QListView {
         background-color: #17191e;
         color: #d0d4dc;
     }
     
-QToolTip {
+    QMessageBox {
         background-color: #17191e;
-        color: #ffffff;
-        border: 1px solid #2a2f3a;
-        padding: 4px;
+        color: #d0d4dc;
+    }
+
+    QMessageBox QLabel {
+        color: #d0d4dc;
+        background-color: transparent;
+    }
+
+    QMessageBox QPushButton {
+        background-color: #252932;
+        color: #d0d4dc;
+        border: 1px solid #3a3f4a;
+        padding: 5px 15px;
+    }
+
+    QMessageBox QPushButton:hover {
+        background-color: #303641;
+    }
+    
+    QToolTip {
+            background-color: #17191e;
+            color: #ffffff;
+            border: 1px solid #2a2f3a;
+            padding: 4px;
     }
     
     QComboBox::drop-down {
