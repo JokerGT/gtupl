@@ -103,6 +103,8 @@ class EditorPanelComponent(QWidget):
             btn.setIconSize(QSize(14, 14))
             btn.setFixedWidth(26)
             btn.setToolTip(tooltip)
+            # Prevent toolbar buttons from capturing tab focus
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setStyleSheet(
                 "QPushButton { background: transparent; border: none; } "
                 "QPushButton:hover { background: #2a2f3a; border-radius: 3px; }"
@@ -164,6 +166,51 @@ class EditorPanelComponent(QWidget):
         
         self._active_movies = []
 
+    def keyPressEvent(self, event):
+        # Handle custom shortcuts for bold, italic, and underline formatting tags
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            key = event.key()
+            if key == Qt.Key.Key_B:
+                self.toggle_formatting_tag("b")
+                event.accept()
+                return
+            elif key == Qt.Key.Key_I:
+                self.toggle_formatting_tag("i")
+                event.accept()
+                return
+            elif key == Qt.Key.Key_U:
+                self.toggle_formatting_tag("u")
+                event.accept()
+                return
+        
+        super().keyPressEvent(event)
+
+    def toggle_formatting_tag(self, tag):
+        cursor = self.editor.textCursor()
+        selected_text = cursor.selectedText().replace("\u2029", "\n")
+        
+        open_tag = f"[{tag}]"
+        close_tag = f"[/{tag}]"
+        
+        if selected_text.startswith(open_tag) and selected_text.endswith(close_tag):
+            # Remove tags if already wrapped
+            unwrapped = selected_text[len(open_tag):-len(close_tag)]
+            cursor.insertText(unwrapped)
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len(unwrapped))
+            cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(unwrapped))
+        else:
+            # Add tags if not wrapped
+            replacement = f"{open_tag}{selected_text}{close_tag}"
+            cursor.insertText(replacement)
+            if selected_text:
+                cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len(close_tag) + len(selected_text))
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(selected_text))
+            else:
+                cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len(close_tag))
+                
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
+
     def update_live_preview(self):
         raw_text = self.editor.toPlainText()
 
@@ -189,12 +236,11 @@ class EditorPanelComponent(QWidget):
                         q_bytes = QByteArray(image_bytes)
                         
                         buffer = QBuffer(q_bytes)
-                        # Keep references alive attached to the buffer object
                         buffer._q_bytes = q_bytes 
                         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
                         
                         movie = QMovie(buffer, b"gif")
-                        movie._buffer = buffer  # Prevent garbage collection
+                        movie._buffer = buffer
                         
                         if movie.isValid():
                             resource_url = QUrl(clean_path)
@@ -352,7 +398,6 @@ class EditorPanelComponent(QWidget):
             cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img]") + len(img_url) + len("[/img]"))
             cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len("[/img="))
             
-        self.editor.setTextGenerator = None if hasattr(self.editor, 'setTextGenerator') else None
         self.editor.setTextCursor(cursor)
         self.editor.setFocus()
 

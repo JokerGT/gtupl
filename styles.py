@@ -6,8 +6,10 @@ GLOBAL_STYLESHEET = """
         color: #d0d4dc;
     }
     
-    QToolTip {
+QToolTip {
+        background-color: #17191e;
         color: #ffffff;
+        border: 1px solid #2a2f3a;
         padding: 4px;
     }
     

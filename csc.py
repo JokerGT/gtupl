@@ -7,7 +7,7 @@ import cv2
 import configparser
 from PIL import Image, ImageDraw, ImageFont
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, QByteArray
 
 # Import in-memory assets dictionary
 try:

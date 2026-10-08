@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
 
 from constants import SCEEDITOR_COLORS
 
-# Import in-memory assets dictionary from assets.py
 try:
     from assets import ASSETS
 except ImportError:
@@ -130,7 +129,6 @@ class CategoryTile(QFrame):
         img_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Load image from in-memory assets instead of disk path
         pixmap = get_pixmap_from_asset(f"{cat_id}.jpg")
 
         if pixmap and not pixmap.isNull():
@@ -261,7 +259,7 @@ class CategoryDropdown(QPushButton):
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0px; }
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
         """)
-        scroll.setFixedHeight(280)
+        scroll.setFixedHeight(600)
 
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")
@@ -300,7 +298,6 @@ class CategoryDropdown(QPushButton):
         self.selected_name = cat_name
         self.selected_id = cat_id
 
-        # Load button icon from memory asset
         pixmap = get_pixmap_from_asset(f"{cat_id}.jpg")
         if pixmap and not pixmap.isNull():
             self.setIcon(QIcon(pixmap))
@@ -358,7 +355,6 @@ class MultiCategoryDropdown(QPushButton):
             self.setText(f"  {', '.join(names)}")
             first_id = list(self.selected_items.keys())[0]
             
-            # Load icon from memory asset
             pixmap = get_pixmap_from_asset(f"{first_id}.jpg")
             if pixmap and not pixmap.isNull():
                 self.setIcon(QIcon(pixmap))
@@ -414,7 +410,7 @@ class MultiCategoryDropdown(QPushButton):
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; height: 0px; }
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
         """)
-        scroll.setFixedHeight(280)
+        scroll.setFixedHeight(600)
 
         grid_widget = QWidget()
         grid_widget.setStyleSheet("background: transparent;")

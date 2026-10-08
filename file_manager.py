@@ -88,6 +88,8 @@ class FileManagerComponent(QObject):
         self.refresh_ui()
         if hasattr(self.parent, "sync_pictures_from_files"):
             self.parent.sync_pictures_from_files()
+        
+        # Force a complete update including validation
         self.parent.update_progress()
 
     def refresh_ui(self):

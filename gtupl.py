@@ -2,7 +2,7 @@ import sys
 import os
 import ctypes
 import traceback
-from PyQt6.QtCore import QSize, Qt, QTimer, QThread, QObject, QEvent
+from PyQt6.QtCore import QSize, Qt, QTimer, QThread, QObject, QEvent, QByteArray
 from PyQt6.QtGui import QIcon, QFont, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QGridLayout, QFileDialog, QFrame, QHBoxLayout,
@@ -35,7 +35,6 @@ import io
 from assets import ASSETS
 
 def get_asset_bytes(relative_path):
-    # Clean up any folder prefixes if passed in
     clean_path = relative_path.replace("assets/", "").replace("assets\\", "")
     
     if clean_path not in ASSETS:
@@ -44,7 +43,6 @@ def get_asset_bytes(relative_path):
     return base64.b64decode(ASSETS[clean_path])
 
 def get_asset_stream(relative_path):
-    """Returns an io.BytesIO stream, ideal for libraries like PIL, Pygame, or Tkinter."""
     return io.BytesIO(get_asset_bytes(relative_path))
 
 class Tee:
@@ -114,14 +112,11 @@ class ImageDropFilter(QObject):
                     event.acceptProposedAction()
                     return True
         return super().eventFilter(obj, event)
-
-
+        
 class DarkFormApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GayTorrent Uploader")
-        
-        # raise RuntimeError("This is a forced test crash to verify the error log.")
         
         screen_geometry = QApplication.primaryScreen().availableGeometry()
 
@@ -129,12 +124,10 @@ class DarkFormApp(QMainWindow):
         target_width = int(screen_geometry.width() * 0.8)
         target_height = int(screen_geometry.height() * 0.9)
 
-        # 2. Set the dynamic size (and keep your minimums if needed)
         self.resize(target_width, target_height)
         self.setMinimumWidth(1100)
         self.setMinimumHeight(750)
 
-        # 3. Center the window dynamically using the target dimensions
         x = (screen_geometry.width() - target_width) // 2
         y = (screen_geometry.height() - target_height) // 2
         self.move(x, y)
@@ -143,7 +136,8 @@ class DarkFormApp(QMainWindow):
         self.picture_data_list = []
         self.auto_synced_pictures = set()
         self.pixmap_cache = {}
-        self.generated_contact_sheets = []  # <-- Initialize here
+        self.generated_contact_sheets = []
+        self._last_validation_errors = []
         
         self.file_manager = FileManagerComponent(self)
         self.setStyleSheet(GLOBAL_STYLESHEET)
@@ -162,12 +156,11 @@ class DarkFormApp(QMainWindow):
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(10)
 
-        # Left column outer wrapper layout
         left_column_layout = QVBoxLayout()
         left_column_layout.setContentsMargins(0, 0, 0, 0)
         left_column_layout.setSpacing(10)
 
-        # --- Header Section (Sticky at the top) ---
+        # --- Sticky Header Section ---
         cloud_upload_icon = qta.icon("fa6s.upload", color="#ffffff")
         header_title = QLabel(" Upload a torrent")
         header_title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
@@ -217,7 +210,6 @@ class DarkFormApp(QMainWindow):
         
         left_column_layout.addWidget(header_frame)
 
-        # --- Scroll Area for the Rest of the Form ---
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("border: none; background: transparent;")
@@ -357,12 +349,10 @@ class DarkFormApp(QMainWindow):
         """)
         self.file_list_view.setUniformItemSizes(True)
 
-        # Create and set the model
         from file_manager import FileListModel
         self.file_list_model = FileListModel([])
         self.file_list_view.setModel(self.file_list_model)
 
-        # Store reference in file_manager so it can update the model
         self.file_manager.list_model = self.file_list_model
 
         preview_card_layout.addWidget(self.file_list_view)
@@ -422,13 +412,11 @@ class DarkFormApp(QMainWindow):
         
         self.last_browsed_dir = os.path.expanduser("~")
         
-        # --- Enable Drag and Drop for Pictures Area ---
         self.pics_scroll.setAcceptDrops(True)
         self.pics_container.setAcceptDrops(True)
         self.image_drop_filter = ImageDropFilter(self)
         self.pics_scroll.installEventFilter(self.image_drop_filter)
         self.pics_container.installEventFilter(self.image_drop_filter)
-        # ---------------------------------------------
 
         pics_layout.addWidget(self.pics_scroll)
 
@@ -486,7 +474,7 @@ class DarkFormApp(QMainWindow):
         
         self.is_processing = False
 
-        # --- Right Sidebar Panel Component ---
+        # --- Sidebar Panel ---
         self.sidebar_panel = SidebarPanelComponent(self)
         self.history_panel = self.sidebar_panel.history_panel
         
@@ -499,7 +487,6 @@ class DarkFormApp(QMainWindow):
         self.update_progress()
     
     def set_main_parameters_enabled(self, enabled: bool):
-        """Enable or disable all main window input fields during processing."""
         self.main_cat_combo.setEnabled(enabled)
         self.sub_cat_combo.setEnabled(enabled)
         self.drop_zone.setEnabled(enabled)
@@ -523,6 +510,49 @@ class DarkFormApp(QMainWindow):
             self.cancel_processing()
         else:
             self.start_processing_from_sidebar()
+            
+    def has_compressed_file(self) -> bool:
+        compressed_extensions = (
+            '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', 
+            '.iso', '.dmg', '.apk', '.pkg'
+        )
+        for item in self.file_manager.file_data_list:
+            full_path = item.get("full_path", "").lower()
+            for ext in compressed_extensions:
+                if full_path.endswith(ext):
+                    return True
+        return False
+
+    def has_executable_file(self) -> bool:
+        executable_extensions = ('.exe', '.bat', '.cmd', '.com', '.scr', '.msi', '.app', '.deb', '.rpm', '.apk')
+        for item in self.file_manager.file_data_list:
+            full_path = item.get("full_path", "").lower()
+            for ext in executable_extensions:
+                if full_path.endswith(ext):
+                    return True
+        return False
+
+    def has_media_programs_with_compressed(self) -> bool:
+        media_programs_id = CATEGORIES.get("Media Programs")
+        
+        if media_programs_id is None:
+            return False
+        
+        is_media_programs = str(self.main_cat_combo.selected_id) == media_programs_id
+        return is_media_programs and self.has_compressed_file()
+
+    def validate_before_processing(self) -> tuple[bool, list[str]]:
+        errors = []
+        
+        # Rule 1: Media Programs + Compressed file
+        if self.has_media_programs_with_compressed():
+            errors.append("Compressed files cannot be added to Media Programs category.")
+        
+        # Rule 2: Executable files present
+        if self.has_executable_file():
+            errors.append("The tracker does not accept torrents containing .exe files.")
+        
+        return len(errors) == 0, errors
 
     def cancel_processing(self):
         if hasattr(self, 'processing_worker') and self.processing_worker.isRunning():
@@ -555,6 +585,27 @@ class DarkFormApp(QMainWindow):
     def update_progress(self):
         if getattr(self, 'is_processing', False):
             return
+        
+        # Check validation rules
+        is_valid, error_messages = self.validate_before_processing()
+        
+        if error_messages != self._last_validation_errors:
+            self._last_validation_errors = error_messages
+            
+            if error_messages:
+                # Show the first error immediately
+                self.sidebar_panel.lbl_file_status.setText(error_messages[0])
+                
+                # If there are multiple errors, queue the next ones
+                for idx in range(1, len(error_messages)):
+                    delay = idx * 3000  # 3 seconds per message
+                    QTimer.singleShot(
+                        delay,
+                        lambda msg=error_messages[idx]: self.sidebar_panel.lbl_file_status.setText(msg)
+                    )
+            else:
+                self.sidebar_panel.lbl_file_status.setText("Ready")
+        
         cond1 = self.main_cat_combo.selected_id is not None
         cond2 = len(self.file_manager.file_data_list) > 0
         title_text = self.title_input.text()
@@ -568,7 +619,7 @@ class DarkFormApp(QMainWindow):
         self.header_status.setText(f" {completed_count} of 5 required fields done")
         self.progress_bar.setValue(completed_count)
 
-        is_complete = (completed_count == 5)
+        is_complete = (completed_count == 5) and is_valid
         if hasattr(self.sidebar_panel, 'set_start_button_enabled'):
             self.sidebar_panel.set_start_button_enabled(is_complete)
 
@@ -744,7 +795,6 @@ class DarkFormApp(QMainWindow):
         if not self.picture_data_list:
             self.btn_clear_pics.setVisible(False)
             
-            # Create a container widget for the drop placeholder layout
             placeholder_widget = QWidget()
             placeholder_widget.setStyleSheet("background: transparent;")
             placeholder_layout = QVBoxLayout(placeholder_widget)
@@ -844,6 +894,29 @@ class DarkFormApp(QMainWindow):
         self.preview_dlg = ContactSheetPreviewDialog(pil_image, self)
         self.preview_dlg.exec()
         
+    def display_validation_errors(self, error_messages: list[str]):
+        self._last_validation_errors = error_messages
+        self.sidebar_panel.lbl_file_status.setText("Validation error:")
+        
+        # Display each error with a slight delay between them
+        for idx, error in enumerate(error_messages):
+            delay = (idx + 1) * 3000  # 3 seconds per message
+            QTimer.singleShot(
+                delay,
+                lambda msg=error: self.sidebar_panel.lbl_file_status.setText(msg)
+            )
+        
+        # Clear the message after all have been displayed
+        total_delay = len(error_messages) * 3000 + 1000
+        QTimer.singleShot(
+            total_delay,
+            lambda: (
+                self.sidebar_panel.lbl_file_status.setText("Ready"),
+                setattr(self, '_last_validation_errors', [])
+            )
+        )
+
+        
     def start_processing_from_sidebar(self):
         cond1 = self.main_cat_combo.selected_id is not None
         cond2 = len(self.file_manager.file_data_list) > 0
@@ -852,6 +925,12 @@ class DarkFormApp(QMainWindow):
         cond5 = len(self.editor_panel.editor.toPlainText().strip()) >= 5
         
         if not all([cond1, cond2, cond3, cond4, cond5]):
+            return
+
+        is_valid, error_messages = self.validate_before_processing()
+        if not is_valid:
+            # Display all error messages one after another
+            self.display_validation_errors(error_messages)
             return
 
         indexed_items = []
@@ -979,7 +1058,6 @@ class DarkFormApp(QMainWindow):
             self.sidebar_panel.set_start_button_enabled(True)
             
         else:
-            # Real failure scenario
             self.sidebar_panel.lbl_file_status.setText("Upload failed.")
             self.sidebar_panel.sidebar_progress.setValue(0)
             self.sidebar_panel.set_start_button_enabled(True)
@@ -1005,10 +1083,8 @@ def handle_exception(exc_type, exc_value, exc_traceback):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"\n=== CRASH REPORT [{timestamp}] ===\n{tb_text}\n"
 
-    # Print to sys.stdout so your Tee class catches it and writes it to the active log file!
     print(log_entry, file=sys.stderr)
     
-    # Force flush if sys.stdout is our Tee instance
     if hasattr(sys.stdout, 'flush'):
         sys.stdout.flush()
 
@@ -1018,7 +1094,7 @@ def handle_exception(exc_type, exc_value, exc_traceback):
         if app is not None:
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Critical)
-            msg.setWindowTitle("Unexpected Application Crash")
+            msg.setWindowTitle("GTUpl has Crashed")
             msg.setText("The application has encountered a fatal error and needs to close.")
             msg.setDetailedText(tb_text)
             msg.exec()
@@ -1033,7 +1109,7 @@ if __name__ == "__main__":
 
     tee_instance = Tee()
     sys.stdout = tee_instance
-    sys.stderr = tee_instance  # Optional: route stderr through Tee as well so prints/errors sync up
+    sys.stderr = tee_instance
     
     if sys.platform == "win32":
         gtupl = "gaytorrentuploader.app.1.0"
@@ -1041,9 +1117,14 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     
-    icon_file = "icon.png"
-    if os.path.exists(icon_file):
-        app_icon = QIcon(icon_file)
+    app_icon = QIcon()
+    if "icon.png" in ASSETS:
+        asset_stream = get_asset_stream("icon.png")
+        icon_bytes = asset_stream.read()
+        
+        pixmap = QPixmap()
+        pixmap.loadFromData(QByteArray(icon_bytes))
+        app_icon = QIcon(pixmap)
         app.setWindowIcon(app_icon)
     
     from login import ensure_logged_in
@@ -1051,8 +1132,8 @@ if __name__ == "__main__":
     if ensure_logged_in():
         window = DarkFormApp()
         
-        if os.path.exists(icon_file):
-            window.setWindowIcon(QIcon(icon_file))
+        if not app_icon.isNull():
+            window.setWindowIcon(app_icon)
             
         window.show()
         sys.exit(app.exec())
