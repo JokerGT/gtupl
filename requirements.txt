@@ -1,0 +1,8 @@
+PyQt6>=6.6
+qtawesome>=1.3
+keyring>=25
+libtorrent>=2.0
+requests>=2.31
+opencv-python>=4.9
+Pillow>=10
+numpy>=1.26

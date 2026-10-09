@@ -1,4 +1,5 @@
 import sys
+import multiprocessing
 import os
 import traceback
 from PyQt6.QtCore import QSize, Qt, QTimer, QThread, QObject, QEvent, QByteArray
@@ -54,12 +55,8 @@ def get_asset_stream(relative_path):
 
 class Tee:
     def __init__(self, log_dir="logs", max_files=15):
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        logs_path = os.path.join(base_dir, log_dir)
+        from paths import data_dir
+        logs_path = os.path.join(data_dir(), log_dir)
         os.makedirs(logs_path, exist_ok=True)
 
         self._cleanup_old_logs(logs_path, max_files)
@@ -1178,6 +1175,9 @@ def handle_exception(exc_type, exc_value, exc_traceback):
 
 
 if __name__ == "__main__":
+    # Required for the frozen app: the pipeline runs in a child process
+    # (spawn start method on macOS and Windows).
+    multiprocessing.freeze_support()
     sys.excepthook = handle_exception
 
     tee_instance = Tee()

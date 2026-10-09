@@ -399,7 +399,9 @@ class SidebarPanelComponent(QWidget):
         sidebar_layout.addWidget(self.chk_seeding)
 
         self.combo_client = QComboBox()
-        self.combo_client.addItems(["qBittorrent", "uTorrent"])
+        from paths import is_macos
+        # uTorrent has no current macOS build; qBittorrent is the only autostart client there.
+        self.combo_client.addItems(["qBittorrent"] if is_macos() else ["qBittorrent", "uTorrent"])
         # Insert a blank item at index 0 so it's the initial selection
         self.combo_client.insertItem(0, "")
         self.combo_client.setCurrentIndex(0)
@@ -603,12 +605,8 @@ class SidebarPanelComponent(QWidget):
         import os
         import sys
 
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            
-        ini_path = os.path.join(base_dir, "preferences.ini")
+        from paths import data_dir
+        ini_path = os.path.join(data_dir(), "preferences.ini")
 
         config = configparser.ConfigParser()
         settings = self.get_sidebar_settings()
@@ -655,12 +653,8 @@ class SidebarPanelComponent(QWidget):
         import os
         import sys
 
-        if getattr(sys, 'frozen', False):
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            
-        ini_path = os.path.join(base_dir, "preferences.ini")
+        from paths import data_dir
+        ini_path = os.path.join(data_dir(), "preferences.ini")
         if not os.path.exists(ini_path):
             return
 
@@ -857,7 +851,27 @@ class SidebarPanelComponent(QWidget):
         elif client_name == "uTorrent" and self.utorrent_path and os.path.exists(self.utorrent_path):
             found_path = self.utorrent_path
 
-        if not found_path:
+        from paths import is_macos
+        if not found_path and is_macos():
+            if client_name != "qBittorrent":
+                QMessageBox.information(self, f"{client_name} Not Available",
+                                        f"{client_name} is not available on macOS. Please use qBittorrent.")
+                return False
+            for app_dir in ("/Applications", os.path.expanduser("~/Applications")):
+                candidate = os.path.join(app_dir, "qBittorrent.app", "Contents", "MacOS", "qbittorrent")
+                if os.path.exists(candidate):
+                    found_path = candidate
+                    break
+            if not found_path:
+                QMessageBox.information(self, "qBittorrent Not Found",
+                                        "Could not locate qBittorrent.app. Please select it manually.")
+                app_path, _ = QFileDialog.getOpenFileName(self, "Select qBittorrent.app", "/Applications", "Applications (*.app)")
+                if app_path and app_path.endswith(".app"):
+                    candidate = os.path.join(app_path, "Contents", "MacOS", "qbittorrent")
+                    if os.path.exists(candidate):
+                        found_path = candidate
+
+        if not found_path and not is_macos():
             program_files = os.environ.get("ProgramFiles", "C:\\Program Files")
             program_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
             app_data = os.environ.get("AppData", os.path.expanduser("~\\AppData\\Roaming"))
@@ -876,7 +890,7 @@ class SidebarPanelComponent(QWidget):
                     found_path = path
                     break
 
-        if not found_path:
+        if not found_path and not is_macos():
             program_files = os.environ.get("ProgramFiles", "C:\\Program Files")
             exe_name = "qBittorrent.exe" if client_name == "qBittorrent" else "uTorrent.exe"
             QMessageBox.information(

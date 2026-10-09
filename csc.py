@@ -53,11 +53,8 @@ def get_asset_stream(filename):
 
 
 def get_config_path():
-    if getattr(sys, 'frozen', False):
-        app_dir = os.path.dirname(sys.executable)
-    else:
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(app_dir, "preferences.ini")
+    from paths import data_dir
+    return os.path.join(data_dir(), "preferences.ini")
 
 
 def load_settings():
