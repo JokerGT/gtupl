@@ -10,7 +10,7 @@ import base64
 import os
 
 class HistoryCipher:
-    def __init__(self, secret_key: bytes = b"gtupl_secure_history_key_2026"):
+    def __init__(self, secret_key: bytes = b"a8f4c9b2e1d73f68901245bcde7834fa12908bcf4e6a71b2390f45de123489ac"):
         self.secret_key = secret_key
 
     def encrypt(self, plain_text: str) -> str:
@@ -34,7 +34,6 @@ class HistoryCipher:
 
 
 class HistoryPanelComponent(QWidget):
-    # Custom signal to notify sidebar to switch back to the main view
     back_requested = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -107,13 +106,11 @@ class HistoryPanelComponent(QWidget):
         """)
         frame_layout.addWidget(self.list_history)
 
-        # Load encrypted history from disk
         self.load_history()
 
         main_layout.addWidget(history_frame)
 
     def load_history(self):
-        """Loads and decrypts execution history from local storage."""
         self.runs_data = []
         if os.path.exists(self.history_file):
             try:
@@ -127,7 +124,6 @@ class HistoryPanelComponent(QWidget):
 
         self.list_history.clear()
         for run in self.runs_data:
-            # FIX: Pass redirect_url from the stored run dictionary
             self._add_item_to_ui(
                 run.get("start_time"), 
                 run.get("title"), 
@@ -136,7 +132,6 @@ class HistoryPanelComponent(QWidget):
             )
 
     def save_history(self):
-        """Encrypts and saves execution history to local storage."""
         try:
             raw_json = json.dumps(self.runs_data)
             encrypted_content = self.cipher.encrypt(raw_json)
@@ -157,7 +152,6 @@ class HistoryPanelComponent(QWidget):
         self._add_item_to_ui(start_time, torrent_title, status, redirect_url, prepend=True)
 
     def _add_item_to_ui(self, start_time: str, torrent_title: str, status: str, redirect_url: str = "", prepend: bool = False):
-        """Constructs the custom widget matching: {task start time and torrent title} {status icon} {remove button}"""
         item_widget = QWidget()
         
         # --- Add Tooltip to the custom item widget ---
@@ -168,7 +162,6 @@ class HistoryPanelComponent(QWidget):
         row_layout.setSpacing(8)
 
         # 1. Task Start Time and Torrent Title Label
-        # Insert zero-width spaces (\u200b) between characters so long unbroken words wrap anywhere
         wrapped_title = "\u200b".join(torrent_title)
         display_text = f"{start_time} - {wrapped_title}"
         
@@ -177,7 +170,6 @@ class HistoryPanelComponent(QWidget):
         lbl_info.setStyleSheet("color: #d0d4dc; background: transparent;")
         lbl_info.setWordWrap(True)
         
-        # Determine width ensuring it scales with the list widget but NEVER goes beyond 350px
         max_allowed_width = 350
         list_width = self.list_history.width()
         if list_width <= 90:
@@ -190,7 +182,6 @@ class HistoryPanelComponent(QWidget):
         
         row_layout.addWidget(lbl_info, stretch=1)
 
-        # 2. Status Icon
         lbl_status = QLabel()
         lbl_status.setFixedSize(20, 20)
         lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -261,7 +252,6 @@ class HistoryPanelComponent(QWidget):
         
         list_item = QListWidgetItem()
         
-        # Force layout adjustment so the item size hint accommodates the full wrapped height
         item_widget.adjustSize()
         list_item.setSizeHint(item_widget.sizeHint())
 

@@ -6,7 +6,7 @@ from PyQt6.QtGui import QIcon, QFont, QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QGridLayout, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListView, QMainWindow, QPushButton, QProgressBar,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QMessageBox
+    QScrollArea, QSizePolicy, QSplashScreen, QVBoxLayout, QWidget, QMessageBox
 )
 import qtawesome as qta
 
@@ -38,6 +38,21 @@ from assets import ASSETS
 from csc_metadata import get_metadata_manager
 from torrent_pictures_dialog import AddFromTorrentDialog, TorrentPicturesProcessingWorker, VALID_VIDEO_EXTENSIONS
 
+import winreg
+
+def get_app_info_from_registry():
+    registry_path = r"Software\GTUpl"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
+            current_version, _ = winreg.QueryValueEx(key, "Version")
+            install_path, _ = winreg.QueryValueEx(key, "InstallPath")
+            return current_version, install_path
+    except (FileNotFoundError, PermissionError):
+        # Expected when running in dev mode or portable version; fail silently
+        return None, None
+    except Exception:
+        # Catch-all for any other registry anomalies so runtime is untouched
+        return None, None
 
 def get_asset_bytes(relative_path):
     clean_path = relative_path.replace("assets/", "").replace("assets\\", "")
@@ -50,7 +65,92 @@ def get_asset_bytes(relative_path):
 
 def get_asset_stream(relative_path):
     return io.BytesIO(get_asset_bytes(relative_path))
+    
+from packaging import version  # Optional, but great for clean version comparison (pip install packaging)
+from PyQt6.QtWidgets import QMessageBox
 
+def run_update_checker(parent_window):
+    current_version, install_path = get_app_info_from_registry()
+    if not current_version:
+        return
+
+    owner = "lucassantilli"
+    repo = "gtupl"
+    latest_version, release_url = check_latest_release(owner, repo)
+
+    if not latest_version:
+        return
+
+    # Compare versions safely using the packaging library
+    if version.parse(latest_version) > version.parse(current_version):
+        reply = QMessageBox.question(
+            parent_window,
+            "Update Available",
+            f"A new version ({latest_version}) is available! You are currently on {current_version}.\n\nWould you like to open the download page?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(release_url))
+
+import requests
+def check_latest_release(owner, repo):
+    url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    headers = {"User-Agent": "GTUpl-UpdateChecker"}
+    try:
+        print(f"[DEBUG] Fetching latest release from: {url}")
+        response = requests.get(url, headers=headers, timeout=5)
+        print(f"[DEBUG] GitHub API Status Code: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            latest_version = data.get("tag_name", "").lstrip("v")
+            release_url = data.get("html_url", "")
+            print(f"[DEBUG] Found latest version: {latest_version}")
+            return latest_version, release_url
+        else:
+            print(f"[ERROR] GitHub API failed: {response.text}")
+    except Exception as e:
+        print(f"[ERROR] Failed to check GitHub releases: {e}")
+    return None, None
+
+def run_update_checker(parent_window):
+    print("[DEBUG] Running update checker...")
+    current_version, install_path = get_app_info_from_registry()
+    print(f"[DEBUG] Current version from registry: {current_version}")
+    
+    if not current_version:
+        print("[DEBUG] Update checker aborted: No version found in registry.")
+        return
+
+    owner = "lucassantilli"
+    repo = "gtupl"
+    latest_version, release_url = check_latest_release(owner, repo)
+
+    if not latest_version:
+        print("[DEBUG] Update checker aborted: Could not retrieve latest version from GitHub.")
+        return
+
+    print(f"[DEBUG] Comparing versions -> Latest: {latest_version} vs Current: {current_version}")
+    if version.parse(latest_version) > version.parse(current_version):
+        print("[DEBUG] New version detected! Prompting user.")
+        reply = QMessageBox.question(
+            parent_window,
+            "Update Available",
+            f"A new version ({latest_version}) is available! You are currently on {current_version}.\n\nWould you like to open the download page?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl(release_url))
+    else:
+        print("[DEBUG] App is up to date.")
 
 class Tee:
     def __init__(self, log_dir="logs", max_files=15):
@@ -1191,6 +1291,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     app_icon = QIcon()
+    splash_pixmap = None
     if "icon.png" in ASSETS:
         asset_stream = get_asset_stream("icon.png")
         icon_bytes = asset_stream.read()
@@ -1199,17 +1300,88 @@ if __name__ == "__main__":
         pixmap.loadFromData(QByteArray(icon_bytes))
         app_icon = QIcon(pixmap)
         app.setWindowIcon(app_icon)
+        splash_pixmap = pixmap.scaled(QSize(180, 180), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+    splash = None
+    if "icon.png" in ASSETS:
+        # Use QWidget instead of QDialog for guaranteed background rendering
+        splash = QWidget()
+        splash.setWindowFlags(Qt.WindowType.SplashScreen | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False) # Keep opaque so background color shows
+        splash.setFixedSize(400, 250)
+
+        # Force background color via inline palette or robust stylesheet
+        splash.setStyleSheet("""
+            QWidget {
+                background-color: #17191e;
+                color: #ffffff;
+                border: 1px solid #3a4150;
+                border-radius: 10px;
+            }
+        """)
+
+        splash_layout = QVBoxLayout(splash)
+        splash_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        splash_layout.setSpacing(12)
+
+        # Logo / Icon
+        asset_stream = get_asset_stream("icon.png")
+        icon_bytes = asset_stream.read()
+        pixmap = QPixmap()
+        pixmap.loadFromData(QByteArray(icon_bytes))
+        app_icon = QIcon(pixmap)
+        app.setWindowIcon(app_icon)
+
+        logo_lbl = QLabel()
+        logo_lbl.setPixmap(pixmap.scaled(QSize(80, 80), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_lbl.setStyleSheet("background: transparent; border: none;")
+
+        # Title text
+        title_lbl = QLabel("GayTorrent Uploader")
+        title_lbl.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setStyleSheet("background: transparent; border: none;")
+
+        # Status / Loading text
+        status_lbl = QLabel("Loading application...")
+        status_lbl.setFont(QFont("Arial", 10))
+        status_lbl.setStyleSheet("color: #7b8394; background: transparent; border: none;")
+        status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        splash_layout.addWidget(logo_lbl)
+        splash_layout.addWidget(title_lbl)
+        splash_layout.addWidget(status_lbl)
+
+        # Center the splash on the primary screen
+        screen_geo = QApplication.primaryScreen().availableGeometry()
+        splash.move(
+            (screen_geo.width() - splash.width()) // 2,
+            (screen_geo.height() - splash.height()) // 2
+        )
+
+        splash.show()
+        app.processEvents()
 
     from login import ensure_logged_in
 
     if ensure_logged_in():
+        # Heavy initialization of the main window happens here
         window = DarkFormApp()
 
         if not app_icon.isNull():
             window.setWindowIcon(app_icon)
 
         window.show()
+
+        # Close splash widget once the window is visible
+        if splash:
+            splash.close()
+
+        QTimer.singleShot(1000, lambda: run_update_checker(window))
         sys.exit(app.exec())
     else:
+        if splash:
+            splash.close()
         print("[ERROR] Login failed or cancelled. Exiting application.")
         sys.exit(1)
