@@ -60,6 +60,23 @@ jobs:
           name: GTUpl-mac-${{ matrix.arch }}
           path: GTUpl-mac-${{ matrix.arch }}.dmg
 
+      - name: Smoke test (starts and stays up without a display)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          dist/GTUpl.app/Contents/MacOS/GTUpl &
+          pid=$!
+          sleep 25
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "GTUpl still running after 25 s"
+            kill "$pid"
+          else
+            code=0; wait "$pid" || code=$?
+            echo "GTUpl exited after start with code $code"
+            cat "$HOME/Library/Application Support/GTUpl/logs/"*.log 2>/dev/null || true
+            exit 1
+          fi
+
       - name: Attach to release
         if: github.event_name == 'release'
         env:

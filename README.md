@@ -36,6 +36,10 @@ The amount of still frames for each file depends on total of videos included in 
 
 Individual frames can be included as part of the torrent content with no limitation using the sidebar settings.
 
+### Windows
+Download `GTUpl_Installer.exe` from the latest release and run it. It installs for the current user and needs no administrator rights.
+The installer is built by the `Windows build` workflow on every release, with the same Nuitka flags as `_build.bat` and the Inno Setup script `_inno_installer.iss`.
+
 ### macOS
 Download `GTUpl-mac-apple-silicon.dmg` (M1 and later) or `GTUpl-mac-intel.dmg` from the latest release, open it and drag GTUpl into Applications.
 The app is not notarized, so macOS blocks the first start. Click Done in that dialog, then open System Settings → Privacy & Security, scroll to Security and click Open Anyway next to GTUpl. From then on it starts normally. (Terminal alternative: `xattr -dr com.apple.quarantine /Applications/GTUpl.app`.) Preferences, history and logs live in `~/Library/Application Support/GTUpl`.
