@@ -75,7 +75,7 @@ def run_update_checker(parent_window):
     if not current_version:
         return
 
-    owner = "lucassantilli"
+    owner = "JokerGT"
     repo = "gtupl"
     latest_version, release_url = check_latest_release(owner, repo)
 
@@ -127,7 +127,7 @@ def run_update_checker(parent_window):
         print("[DEBUG] Update checker aborted: No version found in registry.")
         return
 
-    owner = "lucassantilli"
+    owner = "JokerGT"
     repo = "gtupl"
     latest_version, release_url = check_latest_release(owner, repo)
 

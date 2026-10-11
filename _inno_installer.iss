@@ -4,7 +4,7 @@
 
 #define MyAppName "GTUpl"
 #define MyAppVersion "1.1.5"
-#define MyAppPublisher "lucassantilli"
+#define MyAppPublisher "JokerGT"
 #define MyAppExeName "gtupl.exe"
 
 [Setup]
