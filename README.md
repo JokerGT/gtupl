@@ -35,3 +35,8 @@ The amount of still frames for each file depends on total of videos included in 
 6 or more = 1 still frame
 
 Individual frames can be included as part of the torrent content with no limitation using the sidebar settings.
+
+### macOS
+Download `GTUpl-mac-apple-silicon.dmg` (M1 and later) or `GTUpl-mac-intel.dmg` from the latest release, open it and drag GTUpl into Applications.
+The app is not notarized, so macOS blocks the first start. Click Done in that dialog, then open System Settings → Privacy & Security, scroll to Security and click Open Anyway next to GTUpl. From then on it starts normally. (Terminal alternative: `xattr -dr com.apple.quarantine /Applications/GTUpl.app`.) Preferences, history and logs live in `~/Library/Application Support/GTUpl`.
+Seeding autostart on macOS supports qBittorrent installed in Applications. The macOS builds are produced by the `macOS build` workflow on every release.

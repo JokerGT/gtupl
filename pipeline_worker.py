@@ -25,6 +25,8 @@ def create_hardlink_safe(src, dst):
         return False
 
 def hide_directory_as_system(path):
+    if sys.platform != "win32":
+        return False  # the staging folder name starts with a dot: hidden on macOS and Linux
     try:
         ctypes.windll.kernel32.SetFileAttributesW(path, 0x04 | 0x02)
         return True

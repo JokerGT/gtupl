@@ -39,7 +39,8 @@ class HistoryPanelComponent(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cipher = HistoryCipher()
-        self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.enc")
+        from paths import data_dir
+        self.history_file = os.path.join(data_dir(), "history.enc")
         self.runs_data = []
 
         main_layout = QVBoxLayout(self)

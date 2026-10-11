@@ -1,0 +1,10 @@
+__pycache__/
+build/
+dist/
+*.spec
+packaging/GTUpl.iconset/
+packaging/GTUpl.icns
+packaging/icon-source.png
+preferences.ini
+history.enc
+logs/
