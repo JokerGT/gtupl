@@ -77,6 +77,7 @@ jobs:
         with:
           name: GTUpl-windows${{ env.USE_UPX != 'true' && '-noupx' || '' }}
           path: Output/GTUpl_Installer.exe
+          retention-days: 7
 
       - name: Smoke test (starts and stays up without a display)
         env:

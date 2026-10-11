@@ -59,6 +59,7 @@ jobs:
         with:
           name: GTUpl-mac-${{ matrix.arch }}
           path: GTUpl-mac-${{ matrix.arch }}.dmg
+          retention-days: 7
 
       - name: Smoke test (starts and stays up without a display)
         env:
