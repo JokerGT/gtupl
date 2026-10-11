@@ -39,9 +39,14 @@ from assets import ASSETS
 from csc_metadata import get_metadata_manager
 from torrent_pictures_dialog import AddFromTorrentDialog, TorrentPicturesProcessingWorker, VALID_VIDEO_EXTENSIONS
 
-import winreg
+if sys.platform == "win32":
+    import winreg
+else:
+    winreg = None  # the registry only exists on Windows
 
 def get_app_info_from_registry():
+    if winreg is None:
+        return None, None
     registry_path = r"Software\GTUpl"
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path) as key:
