@@ -312,7 +312,7 @@ def _torrent_process_target(
         for tracker in trackers:
             t.add_tracker(str(tracker))
 
-        t.set_creator("GayTorrent Uploader")
+        t.set_creator("Gaytor.rent Uploader")
 
         queue.put(('progress', int(t_range[0]), "Hashing pieces via libtorrent..."))
         total_pieces = t.num_pieces()

@@ -111,7 +111,7 @@ class ApiKeyDialog(QDialog):
     def __init__(self, verify, notice="", prefill=None, parent=None):
         super().__init__(parent)
         self.verify = verify
-        self.setWindowTitle("GayTorrent Uploader")
+        self.setWindowTitle("Gaytor.rent Uploader")
         self.setMinimumWidth(480)
         self.setStyleSheet("""
             QDialog { background-color: #17191e; }

@@ -3,7 +3,7 @@
 ; Non-commercial use only
 
 #define MyAppName "GTUpl"
-#define MyAppVersion "1.1.6"
+#define MyAppVersion "1.1.7"
 #define MyAppPublisher "JokerGT"
 #define MyAppExeName "gtupl.exe"
 

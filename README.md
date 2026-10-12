@@ -1,6 +1,8 @@
 <img width="1538" height="967" alt="image" src="https://github.com/user-attachments/assets/5541a5cc-5f93-4208-b228-eb869f5c0418" />
 
-# GayTorrent Uploader
+# Gaytor.rent Uploader
+
+> **Note:** This is a temporary upload tool, kindly provided to gaytor.rent by ianfontinell. A new gaytor.rent client is on its way and will replace it soon.
 
 ### Key Features
 

@@ -222,7 +222,12 @@ class ImageDropFilter(QObject):
 class DarkFormApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GayTorrent Uploader")
+        self.setWindowTitle("Gaytor.rent Uploader")
+        # Permanent note in the status bar: this uploader is a stopgap
+        notice = QLabel("Temporary tool, kindly provided by ianfontinell. A new gaytor.rent client is coming soon.")
+        notice.setStyleSheet("color: #7b8394; padding: 2px 8px; background: transparent;")
+        self.statusBar().setStyleSheet("QStatusBar { background: transparent; } QStatusBar::item { border: none; }")
+        self.statusBar().addWidget(notice, 1)
 
         screen_geometry = QApplication.primaryScreen().availableGeometry()
 
@@ -1343,10 +1348,16 @@ if __name__ == "__main__":
         logo_lbl.setStyleSheet("background: transparent; border: none;")
 
         # Title text
-        title_lbl = QLabel("GayTorrent Uploader")
+        title_lbl = QLabel("Gaytor.rent Uploader")
         title_lbl.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_lbl.setStyleSheet("background: transparent; border: none;")
+
+        # Note: temporary tool until the new client
+        notice_lbl = QLabel("Temporary tool, kindly provided by ianfontinell.\nA new gaytor.rent client is coming soon.")
+        notice_lbl.setFont(QFont("Arial", 9))
+        notice_lbl.setStyleSheet("color: #7b8394; background: transparent; border: none;")
+        notice_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Status / Loading text
         status_lbl = QLabel("Loading application...")
@@ -1356,6 +1367,7 @@ if __name__ == "__main__":
 
         splash_layout.addWidget(logo_lbl)
         splash_layout.addWidget(title_lbl)
+        splash_layout.addWidget(notice_lbl)
         splash_layout.addWidget(status_lbl)
 
         # Center the splash on the primary screen
